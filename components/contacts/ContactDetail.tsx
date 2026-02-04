@@ -327,7 +327,7 @@ export default function ContactDetail({ id }: { id: string }) {
                   fullWidth
                   SelectProps={{ multiple: true }}
                   value={firstSessionForm.player_ids}
-                  onChange={(e) => setFirstSessionForm({ ...firstSessionForm, player_ids: e.target.value as string[] })}
+                  onChange={(e) => setFirstSessionForm({ ...firstSessionForm, player_ids: e.target.value as unknown as string[] })}
                 >
                   {parent.players.map((p) => (
                     <MenuItem key={p.id} value={String(p.id)}>{p.name}</MenuItem>
@@ -427,7 +427,7 @@ export default function ContactDetail({ id }: { id: string }) {
           <CardContent>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
               <Typography variant="h6" sx={{ fontWeight: 600 }}>Active Package</Typography>
-              <Button size="small" variant="outlined" onClick={() => router.push(`/packages/${parent.active_package.id}`)}>
+              <Button size="small" variant="outlined" onClick={() => parent.active_package && router.push(`/packages/${parent.active_package.id}`)}>
                 View Details
               </Button>
             </Box>

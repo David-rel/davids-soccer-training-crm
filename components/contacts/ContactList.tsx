@@ -21,6 +21,8 @@ interface ParentRow extends Parent {
   total_paid: number;
   player_names: string[] | null;
   last_activity_at: string;
+  is_customer?: boolean;
+  active_package_type?: string | null;
 }
 
 // Helper to determine if a lead is going cold
@@ -34,9 +36,9 @@ function isGoingCold(parent: ParentRow): { cold: boolean; daysInactive: number }
   // Different thresholds based on stage
   let threshold = 7; // default
   
-  if (parent.dm_status === 'first_message_sent' || parent.dm_status === 'replied') {
+  if (parent.dm_status === 'first_message') {
     threshold = 2;
-  } else if (parent.dm_status === 'in_talks' || parent.dm_status === 'call_requested') {
+  } else if (parent.dm_status === 'started_talking' || parent.dm_status === 'request_phone_call') {
     threshold = 3;
   } else if (parent.phone_call_booked) {
     threshold = 5;
