@@ -1,6 +1,8 @@
 import { query } from "@/lib/db";
 import { jsonResponse, errorResponse } from "@/lib/api-helpers";
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
   try {
     // Use plain date strings to avoid timezone issues with "timestamp without time zone" columns

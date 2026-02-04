@@ -4,6 +4,8 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import CustomerList from '@/components/customers/CustomerList';
 
+export const dynamic = 'force-dynamic';
+
 export default function CustomersPage() {
   return (
     <Box>

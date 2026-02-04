@@ -3,6 +3,8 @@ import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { createFollowUpReminders } from '@/lib/reminders';
 import { NextRequest } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;

@@ -7,6 +7,8 @@ import AddIcon from '@mui/icons-material/Add';
 import { useRouter } from 'next/navigation';
 import ContactList from '@/components/contacts/ContactList';
 
+export const dynamic = 'force-dynamic';
+
 export default function ContactsPage() {
   const router = useRouter();
   return (

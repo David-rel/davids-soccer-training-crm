@@ -7,6 +7,8 @@ import AddIcon from '@mui/icons-material/Add';
 import { useRouter } from 'next/navigation';
 import SessionList from '@/components/sessions/SessionList';
 
+export const dynamic = 'force-dynamic';
+
 export default function SessionsPage() {
   const router = useRouter();
   return (

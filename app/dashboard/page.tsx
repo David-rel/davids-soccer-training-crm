@@ -63,6 +63,8 @@ interface Player {
   name: string;
 }
 
+export const dynamic = 'force-dynamic';
+
 export default function DashboardPage() {
   const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);

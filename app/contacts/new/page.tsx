@@ -2,6 +2,8 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import ContactForm from '@/components/contacts/ContactForm';
 
+export const dynamic = 'force-dynamic';
+
 export default function NewContactPage() {
   return (
     <Box>

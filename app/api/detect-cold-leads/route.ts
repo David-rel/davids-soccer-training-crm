@@ -48,6 +48,8 @@ const THRESHOLDS: ColdLeadThreshold[] = [
   }
 ];
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: Request) {
   try {
     // Verify the request is from Vercel Cron (or allow manual trigger with secret)

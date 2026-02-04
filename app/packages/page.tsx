@@ -39,6 +39,8 @@ interface PackageRow {
   is_active: boolean;
 }
 
+export const dynamic = 'force-dynamic';
+
 export default function PackagesPage() {
   const router = useRouter();
   const [packages, setPackages] = useState<PackageRow[]>([]);

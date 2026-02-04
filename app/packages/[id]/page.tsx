@@ -39,6 +39,8 @@ interface PackageDetail {
   }>;
 }
 
+export const dynamic = 'force-dynamic';
+
 export default function PackageDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();

@@ -2,6 +2,8 @@ import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { NextRequest } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
