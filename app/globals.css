@@ -1,1 +1,58 @@
 @import "tailwindcss";
+
+/* React Big Calendar Overlay Customization */
+.rbc-overlay {
+  position: absolute !important;
+  min-width: 300px !important;
+  max-width: 450px !important;
+  max-height: 70vh !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25) !important;
+  z-index: 9999 !important;
+  background-color: white !important;
+  border: 1px solid #ddd !important;
+  border-radius: 8px !important;
+  padding: 16px !important;
+  margin-top: 8px !important;
+}
+
+.rbc-overlay-header {
+  position: sticky !important;
+  top: -16px !important;
+  background-color: white !important;
+  z-index: 10 !important;
+  border-bottom: 2px solid #e0e0e0 !important;
+  padding: 8px 0 12px 0 !important;
+  margin-bottom: 12px !important;
+  font-weight: 700 !important;
+  font-size: 1.1rem !important;
+}
+
+.rbc-show-more {
+  cursor: pointer !important;
+  color: #1976d2 !important;
+  font-weight: 600 !important;
+  padding: 4px 8px !important;
+  background-color: rgba(25, 118, 210, 0.08) !important;
+  border-radius: 4px !important;
+  margin-top: 2px !important;
+  display: inline-block !important;
+}
+
+.rbc-show-more:hover {
+  background-color: rgba(25, 118, 210, 0.15) !important;
+  text-decoration: underline !important;
+}
+
+.rbc-event {
+  padding: 2px 5px !important;
+  font-size: 0.85rem !important;
+  margin-bottom: 2px !important;
+}
+
+.rbc-event-content {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}

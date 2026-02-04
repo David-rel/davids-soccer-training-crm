@@ -1,0 +1,649 @@
+'use client';
+
+import { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
+import Box from '@mui/material/Box';
+import Card from '@mui/material/Card';
+import CardContent from '@mui/material/CardContent';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import Button from '@mui/material/Button';
+import IconButton from '@mui/material/IconButton';
+import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import Stepper from '@mui/material/Stepper';
+import Step from '@mui/material/Step';
+import StepLabel from '@mui/material/StepLabel';
+import Divider from '@mui/material/Divider';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
+import AddIcon from '@mui/icons-material/Add';
+import PhoneIcon from '@mui/icons-material/Phone';
+import EmailIcon from '@mui/icons-material/Email';
+import InstagramIcon from '@mui/icons-material/Instagram';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Switch from '@mui/material/Switch';
+import EventIcon from '@mui/icons-material/Event';
+import CheckIcon from '@mui/icons-material/Check';
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import type { DMStatus, CallOutcome, Gender, ParentDetail, Player, Reminder } from '@/lib/types';
+
+const dmSteps = [
+  { value: 'first_message', label: 'First Message' },
+  { value: 'started_talking', label: 'Started Talking' },
+  { value: 'request_phone_call', label: 'Request Call' },
+];
+
+const reminderCategoryLabels: Record<string, string> = {
+  session_reminder: 'Session Reminder',
+  dm_follow_up: 'DM Follow-up',
+  post_call_follow_up: 'Post-Call Follow-up',
+  post_first_session_follow_up: 'Post-First-Session Follow-up',
+  post_session_follow_up: 'Client Drop-off Follow-up',
+};
+
+const reminderTypeLabels: Record<string, string> = {
+  session_48h: '48h before',
+  session_24h: '24h before',
+  session_6h: '6h before',
+  follow_up_1d: 'Day 1',
+  follow_up_3d: 'Day 3',
+  follow_up_7d: 'Day 7',
+  follow_up_14d: 'Day 14',
+};
+
+export default function ContactDetail({ id }: { id: string }) {
+  const router = useRouter();
+  const [parent, setParent] = useState<ParentDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState<string>('');
+  const [playerDialogOpen, setPlayerDialogOpen] = useState(false);
+  const [newPlayer, setNewPlayer] = useState({ name: '', age: '', team: '', gender: '' as Gender | '', notes: '' });
+  const [firstSessionForm, setFirstSessionForm] = useState({
+    player_ids: [] as string[],
+    session_date: '',
+    location: '',
+    price: '',
+    deposit_paid: false,
+    deposit_amount: '',
+    notes: '',
+  });
+  const [bookingFirstSession, setBookingFirstSession] = useState(false);
+
+  const fetchParent = useCallback(async () => {
+    const res = await fetch(`/api/parents/${id}`);
+    if (res.ok) {
+      setParent(await res.json());
+    }
+    setLoading(false);
+  }, [id]);
+
+  useEffect(() => {
+    fetchParent();
+  }, [fetchParent]);
+
+  const updateField = async (field: string, value: unknown) => {
+    try {
+      const res = await fetch(`/api/parents/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: value }),
+      });
+      if (!res.ok) {
+        console.error('Failed to update field:', field, 'Status:', res.status);
+      }
+    } catch (error) {
+      console.error('Error updating field:', field, error);
+    }
+    fetchParent();
+    setEditingField(null);
+  };
+
+  const addPlayer = async () => {
+    if (!newPlayer.name.trim()) return;
+    await fetch(`/api/parents/${id}/players`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: newPlayer.name.trim(),
+        age: newPlayer.age ? parseInt(newPlayer.age) : null,
+        team: newPlayer.team.trim() || null,
+        gender: newPlayer.gender || null,
+        notes: newPlayer.notes.trim() || null,
+      }),
+    });
+    setNewPlayer({ name: '', age: '', team: '', gender: '', notes: '' });
+    setPlayerDialogOpen(false);
+    fetchParent();
+  };
+
+  const deletePlayer = async (playerId: number) => {
+    await fetch(`/api/players/${playerId}`, { method: 'DELETE' });
+    fetchParent();
+  };
+
+  const deleteContact = async () => {
+    if (!confirm('Delete this contact and all their data?')) return;
+    await fetch(`/api/parents/${id}`, { method: 'DELETE' });
+    router.push('/contacts');
+  };
+
+  const bookFirstSession = async () => {
+    if (!firstSessionForm.session_date || !firstSessionForm.location) return;
+    setBookingFirstSession(true);
+    try {
+      await fetch('/api/first-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parent_id: parseInt(id),
+          player_ids: firstSessionForm.player_ids.map(id => parseInt(id)),
+          session_date: firstSessionForm.session_date,
+          location: firstSessionForm.location.trim(),
+          price: firstSessionForm.price ? parseFloat(firstSessionForm.price) : null,
+          deposit_paid: firstSessionForm.deposit_paid,
+          deposit_amount: firstSessionForm.deposit_amount ? parseFloat(firstSessionForm.deposit_amount) : null,
+          notes: firstSessionForm.notes.trim() || null,
+        }),
+      });
+      setFirstSessionForm({ player_ids: [], session_date: '', location: '', price: '', deposit_paid: false, deposit_amount: '', notes: '' });
+      fetchParent();
+    } catch (error) {
+      console.error('Error booking first session:', error);
+    } finally {
+      setBookingFirstSession(false);
+    }
+  };
+
+  const markReminderSent = async (reminderId: number) => {
+    await fetch(`/api/reminders/${reminderId}/mark-sent`, { method: 'POST' });
+    fetchParent();
+  };
+
+  if (loading) return <Typography>Loading...</Typography>;
+  if (!parent) return <Typography>Contact not found.</Typography>;
+
+  const dmStepIndex = parent.dm_status ? dmSteps.findIndex((s) => s.value === parent.dm_status) : -1;
+  const isWentCold = parent.dm_status === 'went_cold';
+
+  return (
+    <Box>
+      {/* Header */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', mb: 3 }}>
+        <Box>
+          <Typography variant="h4" sx={{ fontWeight: 700 }}>
+            {parent.name}
+          </Typography>
+          {parent.secondary_parent_name && (
+            <Typography color="text.secondary">
+              Secondary: {parent.secondary_parent_name}
+            </Typography>
+          )}
+        </Box>
+        <Button color="error" startIcon={<DeleteIcon />} onClick={deleteContact} size="small">
+          Delete
+        </Button>
+      </Box>
+
+      {/* Contact Info */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>Contact Info</Typography>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+            {parent.phone && (
+              <Chip icon={<PhoneIcon />} label={parent.phone} variant="outlined" />
+            )}
+            {parent.email && (
+              <Chip icon={<EmailIcon />} label={parent.email} variant="outlined" />
+            )}
+            {parent.instagram_link && (
+              <Chip
+                icon={<InstagramIcon />}
+                label="Instagram DM"
+                variant="outlined"
+                component="a"
+                href={parent.instagram_link}
+                target="_blank"
+                clickable
+              />
+            )}
+          </Box>
+          {parent.notes && (
+            <Typography sx={{ mt: 2 }} color="text.secondary">{parent.notes}</Typography>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* DM Status Pipeline */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>DM Pipeline</Typography>
+            {isWentCold && <Chip label="Went Cold" color="error" size="small" />}
+          </Box>
+          <Stepper activeStep={isWentCold ? -1 : dmStepIndex} alternativeLabel>
+            {dmSteps.map((step) => (
+              <Step key={step.value} completed={dmStepIndex >= dmSteps.indexOf(step) && !isWentCold}>
+                <StepLabel
+                  sx={{ cursor: 'pointer' }}
+                  onClick={() => updateField('dm_status', step.value)}
+                >
+                  {step.label}
+                </StepLabel>
+              </Step>
+            ))}
+          </Stepper>
+          <Box sx={{ display: 'flex', gap: 1, mt: 2, justifyContent: 'center' }}>
+            {!isWentCold && (
+              <Button size="small" color="error" variant="outlined" onClick={() => updateField('dm_status', 'went_cold')}>
+                Mark Went Cold
+              </Button>
+            )}
+            {isWentCold && (
+              <Button size="small" color="primary" variant="outlined" onClick={() => updateField('dm_status', 'first_message')}>
+                Reactivate
+              </Button>
+            )}
+          </Box>
+        </CardContent>
+      </Card>
+
+      {/* Phone Call Tracking */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>Phone Call</Typography>
+          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Button
+              variant={parent.phone_call_booked ? 'contained' : 'outlined'}
+              onClick={() => updateField('phone_call_booked', !parent.phone_call_booked)}
+            >
+              {parent.phone_call_booked ? 'Call Booked' : 'Book a Call'}
+            </Button>
+            {parent.phone_call_booked && (
+              <>
+                <TextField
+                  label="Call Date"
+                  type="date"
+                  size="small"
+                  value={parent.call_date_time ? parent.call_date_time.slice(0, 10) : ''}
+                  onChange={(e) => updateField('call_date_time', e.target.value || null)}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
+                <TextField
+                  label="Call Outcome"
+                  select
+                  size="small"
+                  sx={{ minWidth: 180 }}
+                  value={parent.call_outcome || ''}
+                  onChange={(e) => updateField('call_outcome', e.target.value || null)}
+                >
+                  <MenuItem value="">--</MenuItem>
+                  <MenuItem value="session_booked">Session Booked</MenuItem>
+                  <MenuItem value="thinking_about_it">Thinking About It</MenuItem>
+                  <MenuItem value="uninterested">Uninterested</MenuItem>
+                  <MenuItem value="went_cold">Went Cold</MenuItem>
+                </TextField>
+              </>
+            )}
+          </Box>
+        </CardContent>
+      </Card>
+
+      {/* Book First Session — appears when call outcome is session_booked and no first session exists */}
+      {parent.call_outcome === 'session_booked' && !parent.first_session && (
+        <Card sx={{ mb: 3, border: 2, borderColor: 'success.main' }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+              <EventIcon color="success" />
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>Book First Session</Typography>
+            </Box>
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
+              <TextField
+                label="Session Date/Time *"
+                type="datetime-local"
+                size="small"
+                fullWidth
+                value={firstSessionForm.session_date}
+                onChange={(e) => setFirstSessionForm({ ...firstSessionForm, session_date: e.target.value })}
+                slotProps={{ inputLabel: { shrink: true } }}
+              />
+              <TextField
+                label="Location *"
+                size="small"
+                fullWidth
+                value={firstSessionForm.location}
+                onChange={(e) => setFirstSessionForm({ ...firstSessionForm, location: e.target.value })}
+              />
+              {parent.players && parent.players.length > 0 && (
+                <TextField
+                  label="Players (select multiple)"
+                  select
+                  size="small"
+                  fullWidth
+                  SelectProps={{ multiple: true }}
+                  value={firstSessionForm.player_ids}
+                  onChange={(e) => setFirstSessionForm({ ...firstSessionForm, player_ids: e.target.value as string[] })}
+                >
+                  {parent.players.map((p) => (
+                    <MenuItem key={p.id} value={String(p.id)}>{p.name}</MenuItem>
+                  ))}
+                </TextField>
+              )}
+              <TextField
+                label="Price ($)"
+                type="number"
+                size="small"
+                fullWidth
+                value={firstSessionForm.price}
+                onChange={(e) => setFirstSessionForm({ ...firstSessionForm, price: e.target.value })}
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={firstSessionForm.deposit_paid}
+                    onChange={(e) => setFirstSessionForm({ ...firstSessionForm, deposit_paid: e.target.checked })}
+                  />
+                }
+                label="Deposit Paid"
+              />
+              {firstSessionForm.deposit_paid && (
+                <TextField
+                  label="Deposit Amount ($)"
+                  type="number"
+                  size="small"
+                  fullWidth
+                  value={firstSessionForm.deposit_amount}
+                  onChange={(e) => setFirstSessionForm({ ...firstSessionForm, deposit_amount: e.target.value })}
+                />
+              )}
+            </Box>
+            <TextField
+              label="Notes"
+              size="small"
+              fullWidth
+              value={firstSessionForm.notes}
+              onChange={(e) => setFirstSessionForm({ ...firstSessionForm, notes: e.target.value })}
+              sx={{ mt: 2 }}
+            />
+            <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
+              <Button
+                variant="contained"
+                color="success"
+                onClick={bookFirstSession}
+                disabled={bookingFirstSession || !firstSessionForm.session_date || !firstSessionForm.location.trim()}
+              >
+                {bookingFirstSession ? 'Booking...' : 'Book First Session'}
+              </Button>
+            </Box>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Players */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              Players ({parent.players?.length || 0})
+            </Typography>
+            <Button startIcon={<AddIcon />} onClick={() => setPlayerDialogOpen(true)} size="small">
+              Add Player
+            </Button>
+          </Box>
+          {parent.players && parent.players.length > 0 ? (
+            parent.players.map((player: Player) => (
+              <Box
+                key={player.id}
+                sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 2, bgcolor: 'grey.50', borderRadius: 2, mb: 1 }}
+              >
+                <Box>
+                  <Typography sx={{ fontWeight: 600 }}>{player.name}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {[player.age && `Age ${player.age}`, player.team, player.gender].filter(Boolean).join(' · ')}
+                  </Typography>
+                  {player.notes && (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{player.notes}</Typography>
+                  )}
+                </Box>
+                <IconButton size="small" color="error" onClick={() => deletePlayer(player.id)}>
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </Box>
+            ))
+          ) : (
+            <Typography color="text.secondary">No players yet.</Typography>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Active Package */}
+      {parent.active_package && (
+        <Card sx={{ mb: 3, border: 2, borderColor: 'success.main' }}>
+          <CardContent>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6" sx={{ fontWeight: 600 }}>Active Package</Typography>
+              <Button size="small" variant="outlined" onClick={() => router.push(`/packages/${parent.active_package.id}`)}>
+                View Details
+              </Button>
+            </Box>
+            <Typography variant="body1" sx={{ fontWeight: 600, mb: 1 }}>
+              {parent.active_package.package_type.replace('_', ' ').toUpperCase()}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              Progress: {parent.active_package.sessions_completed} / {parent.active_package.total_sessions} sessions
+            </Typography>
+            {parent.active_package.price && (
+              <Typography variant="body2" color="text.secondary">
+                Price: ${parent.active_package.price}
+              </Typography>
+            )}
+            {parent.active_package.start_date && (
+              <Typography variant="body2" color="text.secondary">
+                Started: {new Date(parent.active_package.start_date).toLocaleDateString()}
+              </Typography>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Session History */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>Session History</Typography>
+          {parent.first_session && (
+            <Box sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2, mb: 1 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
+                <Typography sx={{ fontWeight: 600 }}>First Session</Typography>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  {(parent.first_session as any).status && (
+                    <Chip
+                      label={(parent.first_session as any).status.replace('_', ' ')}
+                      color={
+                        (parent.first_session as any).status === 'accepted' ? 'success' :
+                        (parent.first_session as any).status === 'completed' ? 'success' :
+                        (parent.first_session as any).status === 'cancelled' ? 'error' : 'warning'
+                      }
+                      size="small"
+                    />
+                  )}
+                  {!((parent.first_session as any).status) && (
+                    <Chip
+                      label={parent.first_session.showed_up === true ? 'Showed Up' : parent.first_session.cancelled ? 'Cancelled' : 'Upcoming'}
+                      color={parent.first_session.showed_up ? 'success' : parent.first_session.cancelled ? 'error' : 'info'}
+                      size="small"
+                    />
+                  )}
+                </Box>
+              </Box>
+              <Typography variant="body2" color="text.secondary">
+                {new Date(parent.first_session.session_date).toLocaleDateString()} — {parent.first_session.location}
+                {parent.first_session.price && ` — $${parent.first_session.price}`}
+              </Typography>
+            </Box>
+          )}
+          {parent.sessions && parent.sessions.length > 0 ? (
+            parent.sessions.map((session) => (
+              <Box key={session.id} sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2, mb: 1 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
+                  <Typography sx={{ fontWeight: 600 }}>
+                    {new Date(session.session_date).toLocaleDateString()}
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    {(session as any).status && (
+                      <Chip
+                        label={(session as any).status.replace('_', ' ')}
+                        color={
+                          (session as any).status === 'accepted' ? 'success' :
+                          (session as any).status === 'completed' ? 'success' :
+                          (session as any).status === 'cancelled' ? 'error' : 'warning'
+                        }
+                        size="small"
+                      />
+                    )}
+                    {!((session as any).status) && (
+                      <Chip
+                        label={session.showed_up === true ? 'Showed Up' : session.cancelled ? 'Cancelled' : 'Upcoming'}
+                        color={session.showed_up ? 'success' : session.cancelled ? 'error' : 'info'}
+                        size="small"
+                      />
+                    )}
+                  </Box>
+                </Box>
+                <Typography variant="body2" color="text.secondary">
+                  {session.location}{session.price && ` — $${session.price}`}
+                  {session.was_paid && ` — Paid (${session.payment_method})`}
+                </Typography>
+              </Box>
+            ))
+          ) : (
+            !parent.first_session && <Typography color="text.secondary">No sessions yet.</Typography>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Pending Reminders */}
+      {parent.pending_reminders && parent.pending_reminders.length > 0 && (() => {
+        const sessionReminders = parent.pending_reminders.filter(
+          (r) => r.reminder_type.startsWith('session_')
+        );
+        const followUpReminders = parent.pending_reminders.filter(
+          (r) => r.reminder_type.startsWith('follow_up_')
+        );
+        return (
+          <Card sx={{ mb: 3 }}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <NotificationsIcon color="warning" />
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                  Pending Reminders ({parent.pending_reminders.length})
+                </Typography>
+              </Box>
+
+              {sessionReminders.length > 0 && (
+                <>
+                  <Typography variant="subtitle2" sx={{ mb: 1, color: '#9c27b0', fontWeight: 600 }}>
+                    Session Reminders
+                  </Typography>
+                  {sessionReminders.map((reminder) => (
+                    <Box
+                      key={reminder.id}
+                      sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        p: 1.5,
+                        bgcolor: 'grey.50',
+                        borderRadius: 2,
+                        mb: 1,
+                        borderLeft: '4px solid #9c27b0',
+                      }}
+                    >
+                      <Box>
+                        <Typography sx={{ fontWeight: 600 }}>
+                          {reminderCategoryLabels[reminder.reminder_category] || reminder.reminder_category}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {reminderTypeLabels[reminder.reminder_type] || reminder.reminder_type}
+                          {' — Due: '}
+                          {new Date(reminder.due_at).toLocaleString()}
+                        </Typography>
+                      </Box>
+                      <IconButton color="success" onClick={() => markReminderSent(reminder.id)} title="Mark as sent">
+                        <CheckIcon />
+                      </IconButton>
+                    </Box>
+                  ))}
+                </>
+              )}
+
+              {followUpReminders.length > 0 && (
+                <>
+                  <Typography variant="subtitle2" sx={{ mb: 1, mt: sessionReminders.length > 0 ? 2 : 0, color: '#2196f3', fontWeight: 600 }}>
+                    Follow-up Reminders
+                  </Typography>
+                  {followUpReminders.map((reminder) => (
+                    <Box
+                      key={reminder.id}
+                      sx={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        p: 1.5,
+                        bgcolor: 'grey.50',
+                        borderRadius: 2,
+                        mb: 1,
+                        borderLeft: '4px solid #2196f3',
+                      }}
+                    >
+                      <Box>
+                        <Typography sx={{ fontWeight: 600 }}>
+                          {reminderCategoryLabels[reminder.reminder_category] || reminder.reminder_category}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {reminderTypeLabels[reminder.reminder_type] || reminder.reminder_type}
+                          {' — Due: '}
+                          {new Date(reminder.due_at).toLocaleString()}
+                        </Typography>
+                      </Box>
+                      <IconButton color="success" onClick={() => markReminderSent(reminder.id)} title="Mark as sent">
+                        <CheckIcon />
+                      </IconButton>
+                    </Box>
+                  ))}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
+
+      {/* Add Player Dialog */}
+      <Dialog open={playerDialogOpen} onClose={() => setPlayerDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Add Player</DialogTitle>
+        <DialogContent>
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mt: 1 }}>
+            <TextField label="Name *" value={newPlayer.name} onChange={(e) => setNewPlayer({ ...newPlayer, name: e.target.value })} fullWidth />
+            <TextField label="Age" value={newPlayer.age} onChange={(e) => setNewPlayer({ ...newPlayer, age: e.target.value })} type="number" fullWidth />
+            <TextField label="Team" value={newPlayer.team} onChange={(e) => setNewPlayer({ ...newPlayer, team: e.target.value })} fullWidth />
+            <TextField label="Gender" value={newPlayer.gender} onChange={(e) => setNewPlayer({ ...newPlayer, gender: e.target.value as Gender })} select fullWidth>
+              <MenuItem value="">--</MenuItem>
+              <MenuItem value="male">Male</MenuItem>
+              <MenuItem value="female">Female</MenuItem>
+              <MenuItem value="other">Other</MenuItem>
+            </TextField>
+          </Box>
+          <TextField label="Notes" value={newPlayer.notes} onChange={(e) => setNewPlayer({ ...newPlayer, notes: e.target.value })} fullWidth sx={{ mt: 2 }} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPlayerDialogOpen(false)}>Cancel</Button>
+          <Button onClick={addPlayer} variant="contained" disabled={!newPlayer.name.trim()}>Add</Button>
+        </DialogActions>
+      </Dialog>
+    </Box>
+  );
+}

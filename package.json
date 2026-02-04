@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "migrate": "tsx scripts/migrate.ts"
+    "migrate": "tsx scripts/migrate.ts",
+    "backup": "tsx scripts/backup.ts",
+    "detect-cold": "tsx scripts/detect-cold-leads.ts",
+    "backfill-reminders": "tsx scripts/backfill-reminders.ts"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -15,16 +18,19 @@
     "@mui/icons-material": "^7.3.7",
     "@mui/material": "^7.3.7",
     "@types/pg": "^8.16.0",
+    "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
     "next": "16.1.6",
     "pg": "^8.18.0",
     "react": "19.2.3",
+    "react-big-calendar": "^1.19.4",
     "react-dom": "19.2.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^20",
     "@types/react": "^19",
+    "@types/react-big-calendar": "^1.16.3",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.4.24",
     "eslint": "^9",
