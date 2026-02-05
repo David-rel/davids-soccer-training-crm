@@ -28,7 +28,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         [session.parent_id]
       );
       if (upcomingSessions.rows.length === 0) {
-        await createFollowUpReminders(session.parent_id, 'post_first_session_follow_up');
+        await createFollowUpReminders(session.parent_id, 'post_first_session_follow_up', {
+          anchorDate: session.session_date,
+        });
       }
     }
 

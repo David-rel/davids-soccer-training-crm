@@ -42,7 +42,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           `DELETE FROM crm_reminders WHERE parent_id = $1 AND reminder_category = 'post_session_follow_up' AND sent = false`,
           [session.parent_id]
         );
-        await createFollowUpReminders(session.parent_id, 'post_session_follow_up');
+        await createFollowUpReminders(session.parent_id, 'post_session_follow_up', {
+          anchorDate: session.session_date,
+        });
       }
     }
 

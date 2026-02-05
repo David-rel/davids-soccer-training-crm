@@ -2,32 +2,61 @@ import { query } from "@/lib/db";
 import { jsonResponse, errorResponse } from "@/lib/api-helpers";
 import {
   getTodayBoundsArizona,
+  getDateBoundsArizona,
   getWeekStartArizona,
   getMonthStartArizona,
   getFutureDateArizona,
+  nowInArizona,
 } from "@/lib/timezone";
+import { NextRequest } from "next/server";
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    // Use Arizona timezone for all date calculations
-    const { start: todayStart, end: todayEnd, dateStr: todayStr } = getTodayBoundsArizona();
+    // Use Arizona timezone for all date calculations.
+    const { start: todayStart, end: todayEnd } = getTodayBoundsArizona();
+    const dayOffsetRaw = Number(request.nextUrl.searchParams.get("dayOffset") ?? "0");
+    const dayOffset = Number.isFinite(dayOffsetRaw)
+      ? Math.max(0, Math.min(3, Math.trunc(dayOffsetRaw)))
+      : 0;
 
-    // Today's phone calls (includes calls with today's date OR calls with no date set that still need action)
-    const callsResult = await query(
-      `SELECT * FROM crm_parents
-       WHERE phone_call_booked = true
-       AND (call_outcome IS NULL OR call_outcome NOT IN ('session_booked', 'uninterested'))
-       AND (
-         (call_date_time >= $1 AND call_date_time <= $2)
-         OR call_date_time IS NULL
-       )
-       ORDER BY call_date_time NULLS LAST`,
-      [todayStart, todayEnd]
-    );
+    let selectedStart = todayStart;
+    let selectedEnd = todayEnd;
 
-    // Today's first sessions (exclude cancelled and completed)
+    if (dayOffset > 0) {
+      const targetArizonaDate = nowInArizona();
+      targetArizonaDate.setDate(targetArizonaDate.getDate() + dayOffset);
+      const selectedBounds = getDateBoundsArizona(targetArizonaDate);
+      selectedStart = selectedBounds.start;
+      selectedEnd = selectedBounds.end;
+    }
+
+    // Selected-day phone calls.
+    // For today, keep undated calls visible; for future days, only show dated calls in that day window.
+    const callsResult = dayOffset === 0
+      ? await query(
+          `SELECT * FROM crm_parents
+           WHERE phone_call_booked = true
+           AND (call_outcome IS NULL OR call_outcome NOT IN ('session_booked', 'uninterested'))
+           AND (
+             (call_date_time >= $1 AND call_date_time <= $2)
+             OR call_date_time IS NULL
+           )
+           ORDER BY call_date_time NULLS LAST`,
+          [selectedStart, selectedEnd]
+        )
+      : await query(
+          `SELECT * FROM crm_parents
+           WHERE phone_call_booked = true
+           AND (call_outcome IS NULL OR call_outcome NOT IN ('session_booked', 'uninterested'))
+           AND call_date_time >= $1
+           AND call_date_time <= $2
+           ORDER BY call_date_time NULLS LAST`,
+          [selectedStart, selectedEnd]
+        );
+
+    // Selected-day first sessions (exclude cancelled and completed)
     const firstSessionsResult = await query(
       `SELECT fs.*, p.name as parent_name,
         ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL) as player_names,
@@ -40,10 +69,10 @@ export async function GET() {
        AND (fs.status IS NULL OR fs.status NOT IN ('cancelled', 'completed'))
        GROUP BY fs.id, p.name
        ORDER BY fs.session_date`,
-      [todayStart, todayEnd]
+      [selectedStart, selectedEnd]
     );
 
-    // Today's regular sessions (exclude cancelled and completed)
+    // Selected-day regular sessions (exclude cancelled and completed)
     const sessionsResult = await query(
       `SELECT s.*, p.name as parent_name,
         ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL) as player_names,
@@ -56,14 +85,16 @@ export async function GET() {
        AND (s.status IS NULL OR s.status NOT IN ('cancelled', 'completed'))
        GROUP BY s.id, p.name
        ORDER BY s.session_date`,
-      [todayStart, todayEnd]
+      [selectedStart, selectedEnd]
     );
 
-    // Today's pending reminders (for dashboard section) — include secondary parent in display name
-    // Use date-only comparison so every reminder due on this calendar day is included (matches calendar view)
+    // Selected-day pending reminders (for dashboard section) — include secondary parent in display name.
+    // IMPORTANT: Use Arizona day boundaries, not due_at::date, because timestamps are stored
+    // as UTC-coded values and date-only comparison can surface the wrong reminder type/day.
     const remindersResult = await query(
       `
       SELECT r.*,
+        p.dm_status as parent_dm_status,
         CASE
           WHEN p.secondary_parent_name IS NOT NULL AND TRIM(COALESCE(p.secondary_parent_name, '')) != ''
           THEN p.name || ' and ' || p.secondary_parent_name
@@ -71,10 +102,12 @@ export async function GET() {
         END as parent_name
       FROM crm_reminders r
       JOIN crm_parents p ON p.id = r.parent_id
-      WHERE r.sent = false AND r.due_at::date = $1::date
+      WHERE r.sent = false
+        AND r.due_at >= $1
+        AND r.due_at <= $2
       ORDER BY r.due_at ASC
     `,
-      [todayStr]
+      [selectedStart, selectedEnd]
     );
 
     // Stats - use Arizona time for week/month boundaries
@@ -144,6 +177,7 @@ export async function GET() {
     const allRemindersResult = await query(
       `
       SELECT r.*,
+        p.dm_status as parent_dm_status,
         CASE
           WHEN p.secondary_parent_name IS NOT NULL AND TRIM(COALESCE(p.secondary_parent_name, '')) != ''
           THEN p.name || ' and ' || p.secondary_parent_name
@@ -162,6 +196,7 @@ export async function GET() {
       todays_first_sessions: firstSessionsResult.rows,
       todays_sessions: sessionsResult.rows,
       pending_reminders: remindersResult.rows,
+      selected_day_offset: dayOffset,
       stats: statsResult.rows[0],
       // Calendar data
       upcomingCalls: upcomingCallsResult.rows,

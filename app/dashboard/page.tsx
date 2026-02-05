@@ -31,15 +31,7 @@ import DialogActions from '@mui/material/DialogActions';
 import TextField from '@mui/material/TextField';
 import MenuItem from '@mui/material/MenuItem';
 import CalendarView from '@/components/dashboard/CalendarView';
-import { formatArizonaDate, formatArizonaTime, toDatetimeLocal } from '@/lib/timezone';
-
-const reminderCategoryLabels: Record<string, string> = {
-  session_reminder: 'Session Reminder',
-  dm_follow_up: 'DM Follow-up',
-  post_call_follow_up: 'Post-Call Follow-up',
-  post_first_session_follow_up: 'Post-First-Session Follow-up',
-  post_session_follow_up: 'Client Drop-off Follow-up',
-};
+import { formatArizonaDate, formatArizonaTime, nowInArizona, toDatetimeLocal } from '@/lib/timezone';
 
 const reminderTypeLabels: Record<string, string> = {
   session_48h: '48h before',
@@ -55,8 +47,9 @@ interface DashboardData {
   todays_calls: Array<{ id: number; name: string; call_date_time: string | null; phone: string }>;
   todays_first_sessions: Array<{ id: number; parent_id: number; parent_name: string; player_names: string[] | null; player_ids: number[] | null; session_date: string; location: string | null; price: number | null; status: string }>;
   todays_sessions: Array<{ id: number; parent_id: number; parent_name: string; player_names: string[] | null; player_ids: number[] | null; session_date: string; location: string | null; price: number | null; status: string }>;
-  pending_reminders: Array<{ id: number; parent_name: string; parent_id: number; reminder_type: string; reminder_category: string; due_at: string }>;
+  pending_reminders: Array<{ id: number; parent_name: string; parent_id: number; reminder_type: string; reminder_category: string; due_at: string; parent_dm_status: string | null }>;
   stats: { total_contacts: number; sessions_this_week: number; revenue_this_month: number };
+  selected_day_offset?: number;
 }
 
 interface Player {
@@ -71,6 +64,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+  const [dayOffset, setDayOffset] = useState(0);
   const [editDialog, setEditDialog] = useState<{ id: number; parent_id: number; type: 'first' | 'regular' } | null>(null);
   const [editForm, setEditForm] = useState({
     session_date: '',
@@ -81,10 +75,11 @@ export default function DashboardPage() {
   const [availablePlayers, setAvailablePlayers] = useState<Player[]>([]);
 
   const fetchDashboard = useCallback(async () => {
-    const res = await fetch('/api/dashboard');
+    setLoading(true);
+    const res = await fetch(`/api/dashboard?dayOffset=${dayOffset}`);
     if (res.ok) setData(await res.json());
     setLoading(false);
-  }, []);
+  }, [dayOffset]);
 
   useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
 
@@ -186,6 +181,47 @@ export default function DashboardPage() {
   if (loading) return <Typography>Loading dashboard...</Typography>;
   if (!data) return <Typography color="error">Failed to load dashboard.</Typography>;
 
+  const reminderGroupLabels: Record<string, string> = {
+    session_reminder: 'Session Reminders',
+    session_follow_up: 'Session Follow-up',
+    first_session_follow_up: 'First Session Follow-up',
+    call_follow_up: 'Call Follow-up',
+    talking_follow_up: 'Talking Follow-up',
+    first_message_follow_up: 'First Message Follow-up',
+  };
+
+  const getReminderGroup = (reminder: DashboardData['pending_reminders'][number]) => {
+    if (reminder.reminder_category === 'session_reminder') return 'session_reminder';
+    if (reminder.reminder_category === 'post_session_follow_up') return 'session_follow_up';
+    if (reminder.reminder_category === 'post_first_session_follow_up') return 'first_session_follow_up';
+    if (reminder.reminder_category === 'post_call_follow_up') return 'call_follow_up';
+    if (reminder.reminder_category === 'dm_follow_up') {
+      return reminder.parent_dm_status === 'first_message' ? 'first_message_follow_up' : 'talking_follow_up';
+    }
+    return 'talking_follow_up';
+  };
+
+  const reminderGroups = [
+    'session_reminder',
+    'session_follow_up',
+    'first_session_follow_up',
+    'call_follow_up',
+    'talking_follow_up',
+    'first_message_follow_up',
+  ].map((groupKey) => ({
+    key: groupKey,
+    label: reminderGroupLabels[groupKey],
+    items: data.pending_reminders.filter((r) => getReminderGroup(r) === groupKey),
+  })).filter((g) => g.items.length > 0);
+
+  const selectedDayDate = nowInArizona();
+  selectedDayDate.setDate(selectedDayDate.getDate() + dayOffset);
+  const selectedDayLabel = dayOffset === 0
+    ? 'Today'
+    : dayOffset === 1
+      ? 'Tomorrow'
+      : formatArizonaDate(selectedDayDate);
+
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
@@ -214,7 +250,7 @@ export default function DashboardPage() {
       ) : (
         <>
           {/* Stats Row */}
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr 1fr' }, gap: 2, mb: 3 }}>
+      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr 1fr' }, gap: 2, mb: 3 }}>
         <Card>
           <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <PeopleIcon sx={{ color: 'primary.main', fontSize: 32 }} />
@@ -244,17 +280,43 @@ export default function DashboardPage() {
         </Card>
       </Box>
 
-      {/* Today's Calls */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+          <Typography sx={{ fontWeight: 700 }}>
+            List View Day: {selectedDayLabel}
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={dayOffset === 0}
+              onClick={() => setDayOffset((prev) => Math.max(0, prev - 1))}
+            >
+              Previous
+            </Button>
+            <Button
+              size="small"
+              variant="contained"
+              disabled={dayOffset >= 3}
+              onClick={() => setDayOffset((prev) => Math.min(3, prev + 1))}
+            >
+              Next
+            </Button>
+          </Box>
+        </CardContent>
+      </Card>
+
+      {/* Selected Day Calls */}
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
             <PhoneIcon sx={{ color: 'primary.main' }} />
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              Today&apos;s Calls ({data.todays_calls.length})
+              Calls ({data.todays_calls.length}) — {selectedDayLabel}
             </Typography>
           </Box>
           {data.todays_calls.length === 0 ? (
-            <Typography color="text.secondary" variant="body2">No calls scheduled today.</Typography>
+            <Typography color="text.secondary" variant="body2">No calls scheduled for this day.</Typography>
           ) : (
             data.todays_calls.map((call) => (
               <Box key={call.id} sx={{ p: 1.5, bgcolor: 'grey.50', borderRadius: 2, mb: 1, cursor: 'pointer' }} onClick={() => router.push(`/contacts/${call.id}`)}>
@@ -269,17 +331,17 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Today's Sessions */}
+      {/* Selected Day Sessions */}
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
             <EventIcon sx={{ color: 'primary.main' }} />
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              Today&apos;s Sessions ({data.todays_first_sessions.length + data.todays_sessions.length})
+              Sessions ({data.todays_first_sessions.length + data.todays_sessions.length}) — {selectedDayLabel}
             </Typography>
           </Box>
           {data.todays_first_sessions.length === 0 && data.todays_sessions.length === 0 ? (
-            <Typography color="text.secondary" variant="body2">No sessions today.</Typography>
+            <Typography color="text.secondary" variant="body2">No sessions for this day.</Typography>
           ) : (
             <>
               {data.todays_first_sessions.map((s) => {
@@ -466,27 +528,32 @@ export default function DashboardPage() {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
             <NotificationsIcon sx={{ color: data.pending_reminders.length > 0 ? 'error.main' : 'primary.main' }} />
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              Text Reminders ({data.pending_reminders.length})
+              Text Reminders ({data.pending_reminders.length}) — {selectedDayLabel}
             </Typography>
           </Box>
           {data.pending_reminders.length === 0 ? (
             <Typography color="text.secondary" variant="body2">No reminders due right now.</Typography>
           ) : (
-            data.pending_reminders.map((reminder) => (
-              <Box key={reminder.id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1.5, bgcolor: 'grey.50', borderRadius: 2, mb: 1 }}>
-                <Box sx={{ cursor: 'pointer' }} onClick={() => router.push(`/contacts/${reminder.parent_id}`)}>
-                  <Typography sx={{ fontWeight: 600 }}>
-                    Text {reminder.parent_name}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {reminderCategoryLabels[reminder.reminder_category] || reminder.reminder_category}
-                    {' — '}
-                    {reminderTypeLabels[reminder.reminder_type] || reminder.reminder_type}
-                  </Typography>
-                </Box>
-                <IconButton color="success" onClick={() => markReminderSent(reminder.id)} title="Mark as sent">
-                  <CheckIcon />
-                </IconButton>
+            reminderGroups.map((group) => (
+              <Box key={group.key} sx={{ mb: 2 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+                  {group.label} ({group.items.length})
+                </Typography>
+                {group.items.map((reminder) => (
+                  <Box key={reminder.id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1.5, bgcolor: 'grey.50', borderRadius: 2, mb: 1 }}>
+                    <Box sx={{ cursor: 'pointer' }} onClick={() => router.push(`/contacts/${reminder.parent_id}`)}>
+                      <Typography sx={{ fontWeight: 600 }}>
+                        Text {reminder.parent_name}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {reminderTypeLabels[reminder.reminder_type] || reminder.reminder_type}
+                      </Typography>
+                    </Box>
+                    <IconButton color="success" onClick={() => markReminderSent(reminder.id)} title="Mark as sent">
+                      <CheckIcon />
+                    </IconButton>
+                  </Box>
+                ))}
               </Box>
             ))
           )}

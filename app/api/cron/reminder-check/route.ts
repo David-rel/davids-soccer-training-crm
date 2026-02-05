@@ -6,8 +6,8 @@ import { nowInArizona } from '@/lib/timezone';
 /**
  * Unified Reminder Checker Cron Job
  *
- * Runs daily at 9 AM Arizona time (4 PM UTC in winter, 3 PM UTC in summer...
- * but AZ doesn't do DST so it's always 4 PM UTC = 9 AM MST)
+ * Runs daily at 9:00 AM Arizona time.
+ * In UTC that is always 16:00 (Arizona is fixed at UTC-7).
  *
  * This job:
  * 1. Ensures all upcoming sessions have 48h, 24h, 6h reminders
@@ -19,37 +19,37 @@ import { nowInArizona } from '@/lib/timezone';
 const COLD_LEAD_THRESHOLDS = [
   {
     stage: 'first_message',
-    daysInactive: 2,
+    daysInactive: 1,
     reminderCategory: 'dm_follow_up',
     description: 'Sent first DM, no response'
   },
   {
     stage: 'started_talking',
-    daysInactive: 3,
+    daysInactive: 1,
     reminderCategory: 'dm_follow_up',
     description: 'Was talking, now silent'
   },
   {
     stage: 'request_phone_call',
-    daysInactive: 3,
+    daysInactive: 1,
     reminderCategory: 'dm_follow_up',
     description: 'Requested call, waiting for booking'
   },
   {
     stage: 'post_call',
-    daysInactive: 5,
+    daysInactive: 1,
     reminderCategory: 'post_call_follow_up',
     description: 'Had call, no booking yet'
   },
   {
     stage: 'post_first_session',
-    daysInactive: 10,
+    daysInactive: 1,
     reminderCategory: 'post_first_session_follow_up',
     description: 'First session done, no package bought'
   },
   {
     stage: 'active_customer_dropped',
-    daysInactive: 21,
+    daysInactive: 1,
     reminderCategory: 'post_session_follow_up',
     description: 'Regular customer, been quiet'
   }
@@ -138,8 +138,11 @@ export async function POST(request: Request) {
     const parentsResult = await query(`
       SELECT
         p.*,
-        (SELECT COUNT(*) FROM crm_first_sessions WHERE parent_id = p.id AND (status IS NULL OR status NOT IN ('cancelled'))) as first_session_count,
-        (SELECT COUNT(*) FROM crm_sessions WHERE parent_id = p.id AND (status IS NULL OR status NOT IN ('cancelled'))) as session_count,
+        (SELECT COUNT(*) FROM crm_first_sessions WHERE parent_id = p.id AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))) as first_session_count,
+        (SELECT MIN(session_date) FROM crm_first_sessions WHERE parent_id = p.id AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))) as first_session_anchor_at,
+        (SELECT MAX(session_date) FROM crm_first_sessions WHERE parent_id = p.id AND status = 'completed' AND showed_up = true) as last_completed_first_session_at,
+        (SELECT COUNT(*) FROM crm_sessions WHERE parent_id = p.id AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))) as session_count,
+        (SELECT MAX(session_date) FROM crm_sessions WHERE parent_id = p.id AND status = 'completed' AND showed_up = true) as last_completed_session_at,
         (SELECT COUNT(*) FROM crm_reminders WHERE parent_id = p.id AND reminder_category LIKE '%follow_up%' AND sent = false) as pending_follow_ups,
         EXTRACT(DAY FROM NOW() - p.last_activity_at) as days_inactive
       FROM crm_parents p
@@ -150,10 +153,9 @@ export async function POST(request: Request) {
     for (const parent of parentsResult.rows) {
       const daysInactive = Math.floor(parent.days_inactive || 0);
 
-      // Skip if they already have pending follow-ups
-      if (parent.pending_follow_ups > 0) {
-        continue;
-      }
+      // For DM/call stages we only create one active set at a time.
+      // Session-based follow-ups are anchored to session dates and can safely be backfilled.
+      const hasPendingFollowUps = Number(parent.pending_follow_ups) > 0;
 
       // Determine their current stage and applicable threshold
       let stage: string | null = null;
@@ -162,11 +164,11 @@ export async function POST(request: Request) {
       // Priority order matters here - check from most progressed to least
 
       // Active customer who dropped off
-      if (parent.is_customer && Number(parent.session_count) > 0) {
+      if (parent.is_customer && parent.last_completed_session_at) {
         stage = 'active_customer_dropped';
         threshold = COLD_LEAD_THRESHOLDS.find(t => t.stage === 'active_customer_dropped');
       }
-      // Had first session but no regular sessions yet
+      // Has first session track, no regular sessions yet
       else if (Number(parent.first_session_count) > 0 && Number(parent.session_count) === 0) {
         stage = 'post_first_session';
         threshold = COLD_LEAD_THRESHOLDS.find(t => t.stage === 'post_first_session');
@@ -199,15 +201,36 @@ export async function POST(request: Request) {
 
       if (!stage || !threshold) continue;
 
+      const isSessionBasedStage = stage === 'post_first_session' || stage === 'active_customer_dropped';
+      if (!isSessionBasedStage && hasPendingFollowUps) {
+        continue;
+      }
+
       // Check if they've exceeded the inactivity threshold
       if (daysInactive >= threshold.daysInactive) {
-        await createFollowUpReminders(parent.id, threshold.reminderCategory);
-        results.coldLeadRemindersCreated += 4; // 1d, 3d, 7d, 14d
-        results.details.coldLeadsDetected.push({
-          name: parent.name,
-          stage,
-          daysInactive
+        const anchorDate =
+          stage === 'post_first_session'
+            ? parent.first_session_anchor_at
+            : stage === 'active_customer_dropped'
+              ? parent.last_completed_session_at
+              : stage === 'post_call'
+                ? parent.call_date_time
+                : undefined;
+        const anchorTimezone = stage === 'post_call' ? 'arizona_local' : 'utc';
+
+        const created = await createFollowUpReminders(parent.id, threshold.reminderCategory, {
+          anchorDate: anchorDate || undefined,
+          anchorTimezone,
         });
+
+        if (created > 0) {
+          results.coldLeadRemindersCreated += created;
+          results.details.coldLeadsDetected.push({
+            name: parent.name,
+            stage,
+            daysInactive
+          });
+        }
       }
     }
 
@@ -280,7 +303,7 @@ export async function POST(request: Request) {
     const deletedPostFirstSessionWithSessions = await query(`
       DELETE FROM crm_reminders r
       WHERE r.reminder_category = 'post_first_session_follow_up'
-        AND r.sent = false
+      AND r.sent = false
         AND EXISTS (
           SELECT 1 FROM crm_sessions s
           WHERE s.parent_id = r.parent_id

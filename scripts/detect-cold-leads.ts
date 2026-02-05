@@ -15,13 +15,13 @@ interface ColdLeadThreshold {
 const THRESHOLDS: ColdLeadThreshold[] = [
   {
     stage: "first_message_sent",
-    daysInactive: 2,
+    daysInactive: 1,
     reminderCategory: "dm_follow_up",
     description: "Sent first DM, no response",
   },
   {
     stage: "in_talks",
-    daysInactive: 3,
+    daysInactive: 1,
     reminderCategory: "dm_follow_up",
     description: "Was talking, now silent",
   },
@@ -33,19 +33,19 @@ const THRESHOLDS: ColdLeadThreshold[] = [
   },
   {
     stage: "post_call",
-    daysInactive: 5,
+    daysInactive: 1,
     reminderCategory: "post_call_follow_up",
     description: "Had call, no booking yet",
   },
   {
     stage: "post_first_session",
-    daysInactive: 10,
+    daysInactive: 1,
     reminderCategory: "post_first_session_follow_up",
     description: "First session done, no package bought",
   },
   {
     stage: "active_customer",
-    daysInactive: 21,
+    daysInactive: 1,
     reminderCategory: "customer_retention",
     description: "Regular customer, been quiet",
   },
@@ -58,8 +58,10 @@ async function detectColdLeads() {
     const sql = `
       SELECT
         p.*,
-        (SELECT COUNT(*) FROM crm_first_sessions WHERE parent_id = p.id) as first_session_count,
-        (SELECT COUNT(*) FROM crm_sessions WHERE parent_id = p.id) as session_count,
+        (SELECT COUNT(*) FROM crm_first_sessions WHERE parent_id = p.id AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))) as first_session_count,
+        (SELECT MIN(session_date) FROM crm_first_sessions WHERE parent_id = p.id AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))) as first_session_anchor_at,
+        (SELECT COUNT(*) FROM crm_sessions WHERE parent_id = p.id AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))) as session_count,
+        (SELECT MAX(session_date) FROM crm_sessions WHERE parent_id = p.id AND status = 'completed' AND showed_up = true) as last_completed_session_at,
         (SELECT COUNT(*) FROM crm_reminders WHERE parent_id = p.id AND reminder_category LIKE '%follow_up%' AND sent = false) as pending_follow_ups,
         EXTRACT(DAY FROM NOW() - p.last_activity_at) as days_inactive
       FROM crm_parents p
@@ -84,13 +86,10 @@ async function detectColdLeads() {
       let stage: string;
       let threshold: ColdLeadThreshold | undefined;
 
-      if (parent.is_customer && parent.session_count > 1) {
+      if (parent.is_customer && parent.last_completed_session_at) {
         stage = "active_customer";
         threshold = THRESHOLDS.find((t) => t.stage === "active_customer");
-      } else if (
-        parent.first_session_count > 0 &&
-        parent.session_count === 0
-      ) {
+      } else if (Number(parent.first_session_count) > 0 && Number(parent.session_count) === 0) {
         stage = "post_first_session";
         threshold = THRESHOLDS.find((t) => t.stage === "post_first_session");
       } else if (
@@ -127,15 +126,37 @@ async function detectColdLeads() {
 
       if (!threshold) continue;
 
+      const isSessionBasedStage =
+        stage === "post_first_session" || stage === "active_customer";
+
       if (daysInactive >= threshold.daysInactive) {
-        if (parent.pending_follow_ups > 0) {
+        if (!isSessionBasedStage && parent.pending_follow_ups > 0) {
           console.log(
             `⏭  ${parent.name} — ${stage} (${daysInactive}d inactive) — already has pending follow-ups`
           );
           continue;
         }
 
-        await createFollowUpReminders(parent.id, threshold.reminderCategory);
+        const anchorDate =
+          stage === "post_first_session"
+            ? parent.first_session_anchor_at
+            : stage === "active_customer"
+              ? parent.last_completed_session_at
+              : stage === "post_call"
+                ? parent.call_date_time
+                : undefined;
+        const anchorTimezone = stage === "post_call" ? "arizona_local" : "utc";
+        const created = await createFollowUpReminders(
+          parent.id,
+          threshold.reminderCategory,
+          {
+            anchorDate: anchorDate || undefined,
+            anchorTimezone,
+          }
+        );
+        if (created === 0) {
+          continue;
+        }
 
         coldLeads.push({
           id: parent.id,

@@ -124,7 +124,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     // Post-call ghost scenario
     if ((body.call_outcome === 'thinking_about_it' || body.call_outcome === 'went_cold') &&
         oldParent.call_outcome !== body.call_outcome) {
-      await createFollowUpReminders(parseInt(id), 'post_call_follow_up');
+      await query(
+        `DELETE FROM crm_reminders WHERE parent_id = $1 AND reminder_category = 'post_call_follow_up' AND sent = false`,
+        [id]
+      );
+      await createFollowUpReminders(parseInt(id), 'post_call_follow_up', {
+        anchorDate: newParent.call_date_time || body.call_date_time || new Date(),
+        anchorTimezone: 'arizona_local',
+      });
     }
     // If they book a session after the call, cancel post-call follow-ups
     if (body.call_outcome === 'session_booked' && oldParent.call_outcome !== 'session_booked') {
