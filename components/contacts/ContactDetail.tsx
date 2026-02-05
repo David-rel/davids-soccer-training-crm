@@ -30,6 +30,7 @@ import Switch from '@mui/material/Switch';
 import EventIcon from '@mui/icons-material/Event';
 import CheckIcon from '@mui/icons-material/Check';
 import NotificationsIcon from '@mui/icons-material/Notifications';
+import { formatArizonaDate, formatArizonaDateTime, toDateInput } from '@/lib/timezone';
 import type { DMStatus, CallOutcome, Gender, ParentDetail, Player, Reminder } from '@/lib/types';
 
 const dmSteps = [
@@ -63,6 +64,7 @@ export default function ContactDetail({ id }: { id: string }) {
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
   const [playerDialogOpen, setPlayerDialogOpen] = useState(false);
+  const [editingPlayer, setEditingPlayer] = useState<Player | null>(null);
   const [newPlayer, setNewPlayer] = useState({ name: '', age: '', team: '', gender: '' as Gender | '', notes: '' });
   const [firstSessionForm, setFirstSessionForm] = useState({
     player_ids: [] as string[],
@@ -104,20 +106,53 @@ export default function ContactDetail({ id }: { id: string }) {
     setEditingField(null);
   };
 
-  const addPlayer = async () => {
-    if (!newPlayer.name.trim()) return;
-    await fetch(`/api/parents/${id}/players`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: newPlayer.name.trim(),
-        age: newPlayer.age ? parseInt(newPlayer.age) : null,
-        team: newPlayer.team.trim() || null,
-        gender: newPlayer.gender || null,
-        notes: newPlayer.notes.trim() || null,
-      }),
-    });
+  const openAddPlayerDialog = () => {
+    setEditingPlayer(null);
     setNewPlayer({ name: '', age: '', team: '', gender: '', notes: '' });
+    setPlayerDialogOpen(true);
+  };
+
+  const openEditPlayerDialog = (player: Player) => {
+    setEditingPlayer(player);
+    setNewPlayer({
+      name: player.name,
+      age: player.age != null ? String(player.age) : '',
+      team: player.team ?? '',
+      gender: player.gender ?? '',
+      notes: player.notes ?? '',
+    });
+    setPlayerDialogOpen(true);
+  };
+
+  const savePlayer = async () => {
+    if (!newPlayer.name.trim()) return;
+    if (editingPlayer) {
+      await fetch(`/api/players/${editingPlayer.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newPlayer.name.trim(),
+          age: newPlayer.age ? parseInt(newPlayer.age) : null,
+          team: newPlayer.team.trim() || null,
+          gender: newPlayer.gender || null,
+          notes: newPlayer.notes.trim() || null,
+        }),
+      });
+    } else {
+      await fetch(`/api/parents/${id}/players`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newPlayer.name.trim(),
+          age: newPlayer.age ? parseInt(newPlayer.age) : null,
+          team: newPlayer.team.trim() || null,
+          gender: newPlayer.gender || null,
+          notes: newPlayer.notes.trim() || null,
+        }),
+      });
+    }
+    setNewPlayer({ name: '', age: '', team: '', gender: '', notes: '' });
+    setEditingPlayer(null);
     setPlayerDialogOpen(false);
     fetchParent();
   };
@@ -270,7 +305,7 @@ export default function ContactDetail({ id }: { id: string }) {
                   label="Call Date"
                   type="date"
                   size="small"
-                  value={parent.call_date_time ? parent.call_date_time.slice(0, 10) : ''}
+                  value={parent.call_date_time ? toDateInput(parent.call_date_time) : ''}
                   onChange={(e) => updateField('call_date_time', e.target.value || null)}
                   slotProps={{ inputLabel: { shrink: true } }}
                 />
@@ -391,7 +426,7 @@ export default function ContactDetail({ id }: { id: string }) {
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
               Players ({parent.players?.length || 0})
             </Typography>
-            <Button startIcon={<AddIcon />} onClick={() => setPlayerDialogOpen(true)} size="small">
+            <Button startIcon={<AddIcon />} onClick={openAddPlayerDialog} size="small">
               Add Player
             </Button>
           </Box>
@@ -410,9 +445,14 @@ export default function ContactDetail({ id }: { id: string }) {
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{player.notes}</Typography>
                   )}
                 </Box>
-                <IconButton size="small" color="error" onClick={() => deletePlayer(player.id)}>
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
+                <Box sx={{ display: 'flex', gap: 0.5 }}>
+                  <IconButton size="small" onClick={() => openEditPlayerDialog(player)} title="Edit player">
+                    <EditIcon fontSize="small" />
+                  </IconButton>
+                  <IconButton size="small" color="error" onClick={() => deletePlayer(player.id)}>
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Box>
               </Box>
             ))
           ) : (
@@ -444,7 +484,7 @@ export default function ContactDetail({ id }: { id: string }) {
             )}
             {parent.active_package.start_date && (
               <Typography variant="body2" color="text.secondary">
-                Started: {new Date(parent.active_package.start_date).toLocaleDateString()}
+                Started: {formatArizonaDate(parent.active_package.start_date)}
               </Typography>
             )}
           </CardContent>
@@ -481,7 +521,7 @@ export default function ContactDetail({ id }: { id: string }) {
                 </Box>
               </Box>
               <Typography variant="body2" color="text.secondary">
-                {new Date(parent.first_session.session_date).toLocaleDateString()} — {parent.first_session.location}
+                {formatArizonaDateTime(parent.first_session.session_date)} — {parent.first_session.location}
                 {parent.first_session.price && ` — $${parent.first_session.price}`}
               </Typography>
             </Box>
@@ -491,7 +531,7 @@ export default function ContactDetail({ id }: { id: string }) {
               <Box key={session.id} sx={{ p: 2, bgcolor: 'grey.50', borderRadius: 2, mb: 1 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1 }}>
                   <Typography sx={{ fontWeight: 600 }}>
-                    {new Date(session.session_date).toLocaleDateString()}
+                    {formatArizonaDateTime(session.session_date)}
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 1 }}>
                     {(session as any).status && (
@@ -570,7 +610,7 @@ export default function ContactDetail({ id }: { id: string }) {
                         <Typography variant="body2" color="text.secondary">
                           {reminderTypeLabels[reminder.reminder_type] || reminder.reminder_type}
                           {' — Due: '}
-                          {new Date(reminder.due_at).toLocaleString()}
+                          {formatArizonaDateTime(reminder.due_at)}
                         </Typography>
                       </Box>
                       <IconButton color="success" onClick={() => markReminderSent(reminder.id)} title="Mark as sent">
@@ -607,7 +647,7 @@ export default function ContactDetail({ id }: { id: string }) {
                         <Typography variant="body2" color="text.secondary">
                           {reminderTypeLabels[reminder.reminder_type] || reminder.reminder_type}
                           {' — Due: '}
-                          {new Date(reminder.due_at).toLocaleString()}
+                          {formatArizonaDateTime(reminder.due_at)}
                         </Typography>
                       </Box>
                       <IconButton color="success" onClick={() => markReminderSent(reminder.id)} title="Mark as sent">
@@ -622,9 +662,9 @@ export default function ContactDetail({ id }: { id: string }) {
         );
       })()}
 
-      {/* Add Player Dialog */}
-      <Dialog open={playerDialogOpen} onClose={() => setPlayerDialogOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Add Player</DialogTitle>
+      {/* Add / Edit Player Dialog */}
+      <Dialog open={playerDialogOpen} onClose={() => { setPlayerDialogOpen(false); setEditingPlayer(null); }} maxWidth="sm" fullWidth>
+        <DialogTitle>{editingPlayer ? 'Edit Player' : 'Add Player'}</DialogTitle>
         <DialogContent>
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mt: 1 }}>
             <TextField label="Name *" value={newPlayer.name} onChange={(e) => setNewPlayer({ ...newPlayer, name: e.target.value })} fullWidth />
@@ -640,8 +680,10 @@ export default function ContactDetail({ id }: { id: string }) {
           <TextField label="Notes" value={newPlayer.notes} onChange={(e) => setNewPlayer({ ...newPlayer, notes: e.target.value })} fullWidth sx={{ mt: 2 }} />
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setPlayerDialogOpen(false)}>Cancel</Button>
-          <Button onClick={addPlayer} variant="contained" disabled={!newPlayer.name.trim()}>Add</Button>
+          <Button onClick={() => { setPlayerDialogOpen(false); setEditingPlayer(null); }}>Cancel</Button>
+          <Button onClick={savePlayer} variant="contained" disabled={!newPlayer.name.trim()}>
+            {editingPlayer ? 'Save' : 'Add'}
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

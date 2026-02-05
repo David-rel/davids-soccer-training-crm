@@ -13,6 +13,7 @@ import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
 import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
+import { toCalendarDate, formatArizona, ARIZONA_TIMEZONE } from "@/lib/timezone";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 
 const locales = {
@@ -164,9 +165,10 @@ export default function CalendarView() {
         };
 
         // Add calls (only those with a date set)
+        // Convert all dates to Arizona time for display
         data.upcomingCalls?.forEach((call) => {
           if (!call.call_date_time) return; // Skip calls without a date
-          const startDate = new Date(call.call_date_time);
+          const startDate = toCalendarDate(call.call_date_time);
           if (isNaN(startDate.getTime())) return; // Skip invalid dates
           const endDate = new Date(startDate.getTime() + 30 * 60000); // 30 min default
           calendarEvents.push({
@@ -185,7 +187,7 @@ export default function CalendarView() {
 
         // Add first sessions
         data.upcomingFirstSessions?.forEach((session) => {
-          const startDate = new Date(session.session_date);
+          const startDate = toCalendarDate(session.session_date);
           const endDate = new Date(startDate.getTime() + 60 * 60000); // 1 hour default
           calendarEvents.push({
             id: `first-session-${session.id}`,
@@ -206,7 +208,7 @@ export default function CalendarView() {
 
         // Add regular sessions
         data.upcomingSessions?.forEach((session) => {
-          const startDate = new Date(session.session_date);
+          const startDate = toCalendarDate(session.session_date);
           const endDate = new Date(startDate.getTime() + 60 * 60000); // 1 hour default
           calendarEvents.push({
             id: `session-${session.id}`,
@@ -227,7 +229,7 @@ export default function CalendarView() {
 
         // Add ALL reminders for calendar
         data.upcomingReminders?.forEach((reminder) => {
-          const dueDate = new Date(reminder.due_at);
+          const dueDate = toCalendarDate(reminder.due_at);
           const sortKey = getSortKey("reminder", reminder.reminder_type);
           calendarEvents.push({
             id: `reminder-${reminder.id}`,
@@ -548,10 +550,10 @@ export default function CalendarView() {
 
                   <Box>
                     <Typography variant="caption" color="text.secondary">
-                      Time
+                      Time (Arizona)
                     </Typography>
                     <Typography variant="body1">
-                      {format(
+                      {formatArizona(
                         selectedEvent.resource?.originalStart ??
                           selectedEvent.start,
                         "PPpp"
@@ -562,7 +564,7 @@ export default function CalendarView() {
                         (selectedEvent.resource?.originalEnd
                           ? selectedEvent.resource.originalEnd.getTime()
                           : selectedEvent.end.getTime()) &&
-                        ` - ${format(
+                        ` - ${formatArizona(
                           selectedEvent.resource?.originalEnd ??
                             selectedEvent.end,
                           "p"

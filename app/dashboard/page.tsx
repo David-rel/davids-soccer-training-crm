@@ -31,6 +31,7 @@ import DialogActions from '@mui/material/DialogActions';
 import TextField from '@mui/material/TextField';
 import MenuItem from '@mui/material/MenuItem';
 import CalendarView from '@/components/dashboard/CalendarView';
+import { formatArizonaDate, formatArizonaTime, toDatetimeLocal } from '@/lib/timezone';
 
 const reminderCategoryLabels: Record<string, string> = {
   session_reminder: 'Session Reminder',
@@ -139,7 +140,7 @@ export default function DashboardPage() {
     }
     
     setEditForm({
-      session_date: new Date(session.session_date).toISOString().slice(0, 16),
+      session_date: toDatetimeLocal(session.session_date),
       location: session.location || '',
       price: session.price?.toString() || '',
       player_ids: session.player_ids || [],
@@ -259,7 +260,7 @@ export default function DashboardPage() {
               <Box key={call.id} sx={{ p: 1.5, bgcolor: 'grey.50', borderRadius: 2, mb: 1, cursor: 'pointer' }} onClick={() => router.push(`/contacts/${call.id}`)}>
                 <Typography sx={{ fontWeight: 600 }}>{call.name}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {call.call_date_time ? new Date(call.call_date_time).toLocaleDateString() : 'No date set'}
+                  {call.call_date_time ? formatArizonaDate(call.call_date_time) : 'No date set'}
                   {call.phone && ` — ${call.phone}`}
                 </Typography>
               </Box>
@@ -313,16 +314,16 @@ export default function DashboardPage() {
                         )}
                       </Box>
                       <Typography variant="body2" color="text.secondary">
-                        {new Date(s.session_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {formatArizonaTime(s.session_date)}
                         {s.location && ` — ${s.location}`}
                         {s.price && ` — $${s.price}`}
                       </Typography>
                     </Box>
                   </Box>
                   <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                    <Button 
-                      size="small" 
-                      variant="outlined" 
+                    <Button
+                      size="small"
+                      variant="outlined"
                       startIcon={<EditIcon />}
                       onClick={() => openEditDialog(s, 'first')}
                     >
@@ -399,16 +400,16 @@ export default function DashboardPage() {
                         )}
                       </Box>
                       <Typography variant="body2" color="text.secondary">
-                        {new Date(s.session_date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {formatArizonaTime(s.session_date)}
                         {s.location && ` — ${s.location}`}
                         {s.price && ` — $${s.price}`}
                       </Typography>
                     </Box>
                   </Box>
                   <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                    <Button 
-                      size="small" 
-                      variant="outlined" 
+                    <Button
+                      size="small"
+                      variant="outlined"
                       startIcon={<EditIcon />}
                       onClick={() => openEditDialog(s, 'regular')}
                     >

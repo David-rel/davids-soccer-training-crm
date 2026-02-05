@@ -1,6 +1,7 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { createSessionReminders } from '@/lib/reminders';
+import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -34,11 +35,14 @@ export async function POST(request: NextRequest) {
       return errorResponse('Parent and session date are required', 400);
     }
 
+    // Convert datetime-local input (Arizona time) to UTC ISO string for storage
+    const sessionDateUTC = parseDatetimeLocalAsArizona(session_date);
+
     const result = await query(
       `INSERT INTO crm_first_sessions (parent_id, session_date, location, price, deposit_paid, deposit_amount, notes)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [parent_id, session_date, location || null, price || null, deposit_paid || false, deposit_amount || null, notes || null]
+      [parent_id, sessionDateUTC, location || null, price || null, deposit_paid || false, deposit_amount || null, notes || null]
     );
 
     const session = result.rows[0];
@@ -59,8 +63,8 @@ export async function POST(request: NextRequest) {
       [parent_id]
     );
 
-    // Create 48h, 24h, 6h reminders
-    await createSessionReminders(parent_id, session_date, { firstSessionId: session.id });
+    // Create 48h, 24h, 6h reminders (use the UTC date)
+    await createSessionReminders(parent_id, sessionDateUTC, { firstSessionId: session.id });
 
     return jsonResponse(session, 201);
   } catch (error) {

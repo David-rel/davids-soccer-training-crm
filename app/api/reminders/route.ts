@@ -6,7 +6,12 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const result = await query(`
-      SELECT r.*, p.name as parent_name
+      SELECT r.*,
+        CASE
+          WHEN p.secondary_parent_name IS NOT NULL AND TRIM(COALESCE(p.secondary_parent_name, '')) != ''
+          THEN p.name || ' and ' || p.secondary_parent_name
+          ELSE p.name
+        END as parent_name
       FROM crm_reminders r
       JOIN crm_parents p ON p.id = r.parent_id
       WHERE r.sent = false

@@ -1,16 +1,18 @@
 import { query } from "@/lib/db";
 import { jsonResponse, errorResponse } from "@/lib/api-helpers";
+import {
+  getTodayBoundsArizona,
+  getWeekStartArizona,
+  getMonthStartArizona,
+  getFutureDateArizona,
+} from "@/lib/timezone";
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    // Use plain date strings to avoid timezone issues with "timestamp without time zone" columns
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-    const todayStart = `${todayStr} 00:00:00`;
-    const todayEnd = `${todayStr} 23:59:59`;
+    // Use Arizona timezone for all date calculations
+    const { start: todayStart, end: todayEnd, dateStr: todayStr } = getTodayBoundsArizona();
 
     // Today's phone calls (includes calls with today's date OR calls with no date set that still need action)
     const callsResult = await query(
@@ -57,24 +59,27 @@ export async function GET() {
       [todayStart, todayEnd]
     );
 
-    // Today's pending reminders (for dashboard section)
+    // Today's pending reminders (for dashboard section) — include secondary parent in display name
+    // Use date-only comparison so every reminder due on this calendar day is included (matches calendar view)
     const remindersResult = await query(
       `
-      SELECT r.*, p.name as parent_name
+      SELECT r.*,
+        CASE
+          WHEN p.secondary_parent_name IS NOT NULL AND TRIM(COALESCE(p.secondary_parent_name, '')) != ''
+          THEN p.name || ' and ' || p.secondary_parent_name
+          ELSE p.name
+        END as parent_name
       FROM crm_reminders r
       JOIN crm_parents p ON p.id = r.parent_id
-      WHERE r.sent = false AND r.due_at >= $1 AND r.due_at <= $2
+      WHERE r.sent = false AND r.due_at::date = $1::date
       ORDER BY r.due_at ASC
     `,
-      [todayStart, todayEnd]
+      [todayStr]
     );
 
-    // Stats
-    const weekStartDate = new Date(now);
-    weekStartDate.setDate(weekStartDate.getDate() - weekStartDate.getDay());
-    const weekStartStr = `${weekStartDate.getFullYear()}-${pad(weekStartDate.getMonth() + 1)}-${pad(weekStartDate.getDate())} 00:00:00`;
-
-    const monthStartStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01 00:00:00`;
+    // Stats - use Arizona time for week/month boundaries
+    const weekStartStr = getWeekStartArizona();
+    const monthStartStr = getMonthStartArizona();
 
     const statsResult = await query(
       `
@@ -88,11 +93,8 @@ export async function GET() {
       [weekStartStr, monthStartStr, todayEnd]
     );
 
-    // Upcoming calls (next 3 months)
-    const futureDate = new Date();
-    futureDate.setDate(futureDate.getDate() + 90);
-
-    const futureDateStr = `${futureDate.getFullYear()}-${pad(futureDate.getMonth() + 1)}-${pad(futureDate.getDate())} 23:59:59`;
+    // Upcoming calls (next 3 months) - use Arizona time
+    const futureDateStr = getFutureDateArizona(90);
 
     const upcomingCallsResult = await query(
       `SELECT * FROM crm_parents
@@ -138,10 +140,15 @@ export async function GET() {
       [todayStart, futureDateStr]
     );
 
-    // ALL reminders for calendar (next 3 months)
+    // ALL reminders for calendar (next 3 months) — include secondary parent in display name
     const allRemindersResult = await query(
       `
-      SELECT r.*, p.name as parent_name
+      SELECT r.*,
+        CASE
+          WHEN p.secondary_parent_name IS NOT NULL AND TRIM(COALESCE(p.secondary_parent_name, '')) != ''
+          THEN p.name || ' and ' || p.secondary_parent_name
+          ELSE p.name
+        END as parent_name
       FROM crm_reminders r
       JOIN crm_parents p ON p.id = r.parent_id
       WHERE r.sent = false AND r.due_at >= $1 AND r.due_at <= $2

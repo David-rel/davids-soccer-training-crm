@@ -1,5 +1,6 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
+import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +21,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   try {
     const { id } = await params;
     const body = await request.json();
+
+    // Convert session_date from Arizona time to UTC if present
+    if (body.session_date) {
+      body.session_date = parseDatetimeLocalAsArizona(body.session_date);
+    }
 
     const fields: string[] = [];
     const values: unknown[] = [];

@@ -20,6 +20,7 @@ import EventRepeatIcon from '@mui/icons-material/EventRepeat';
 import EventBusyIcon from '@mui/icons-material/EventBusy';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import EditIcon from '@mui/icons-material/Edit';
+import { formatArizonaDateTime, toDatetimeLocal, toArizonaTime } from '@/lib/timezone';
 
 interface SessionRow {
   id: number;
@@ -141,7 +142,7 @@ export default function SessionList() {
     }
     
     setEditForm({
-      session_date: new Date(session.session_date).toISOString().slice(0, 16),
+      session_date: toDatetimeLocal(session.session_date),
       location: session.location || '',
       price: session.price?.toString() || '',
       notes: '',
@@ -190,7 +191,7 @@ export default function SessionList() {
     ...regularSessions.map((s) => ({ ...s, sessionType: 'regular' as const })),
   ];
 
-  // Split into upcoming and past sessions
+  // Split into upcoming and past sessions (compare in Arizona time)
   const now = new Date();
   const upcomingSessions = allSessions
     .filter((s) => new Date(s.session_date) > now && !s.cancelled && s.showed_up === null)
@@ -246,7 +247,7 @@ export default function SessionList() {
                     )}
                   </Box>
                   <Typography variant="body2" color="text.secondary">
-                    {new Date(session.session_date).toLocaleString()}
+                    {formatArizonaDateTime(session.session_date)}
                     {session.location && ` — ${session.location}`}
                     {session.price && ` — $${session.price}`}
                   </Typography>

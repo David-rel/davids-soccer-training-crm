@@ -1,6 +1,7 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { createFollowUpReminders } from '@/lib/reminders';
+import { parseDateAsArizona } from '@/lib/timezone';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -53,6 +54,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const fields: string[] = [];
     const values: unknown[] = [];
     let paramIndex = 1;
+
+    // Convert call_date_time from Arizona time to UTC if present
+    // The frontend sends date-only strings like "2026-02-06" which should be
+    // interpreted as midnight Arizona time, not midnight UTC
+    if (body.call_date_time && typeof body.call_date_time === 'string' && body.call_date_time.length === 10) {
+      // Date-only format (YYYY-MM-DD) - convert to UTC
+      body.call_date_time = parseDateAsArizona(body.call_date_time);
+    }
 
     const allowedFields = [
       'name', 'email', 'phone', 'instagram_link', 'secondary_parent_name',
