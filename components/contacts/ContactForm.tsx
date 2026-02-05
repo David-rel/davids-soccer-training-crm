@@ -12,7 +12,7 @@ import CardContent from '@mui/material/CardContent';
 import IconButton from '@mui/material/IconButton';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
-import type { DMStatus, Gender } from '@/lib/types';
+import type { CallOutcome, DMStatus, Gender } from '@/lib/types';
 
 interface PlayerInput {
   name: string;
@@ -39,6 +39,9 @@ export default function ContactForm() {
   const [instagram, setInstagram] = useState('');
   const [secondaryParent, setSecondaryParent] = useState('');
   const [dmStatus, setDmStatus] = useState<DMStatus | ''>('');
+  const [phoneCallBooked, setPhoneCallBooked] = useState(false);
+  const [callDate, setCallDate] = useState('');
+  const [callOutcome, setCallOutcome] = useState<CallOutcome | ''>('');
   const [notes, setNotes] = useState('');
   const [players, setPlayers] = useState<PlayerInput[]>([{ ...emptyPlayer }]);
 
@@ -72,6 +75,9 @@ export default function ContactForm() {
           instagram_link: instagram.trim() || null,
           secondary_parent_name: secondaryParent.trim() || null,
           dm_status: dmStatus || null,
+          phone_call_booked: phoneCallBooked,
+          call_date_time: phoneCallBooked ? (callDate || null) : null,
+          call_outcome: phoneCallBooked ? (callOutcome || null) : null,
           notes: notes.trim() || null,
           players: players
             .filter((p) => p.name.trim())
@@ -115,6 +121,48 @@ export default function ContactForm() {
                 <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
               ))}
             </TextField>
+            <TextField
+              label="Phone Call"
+              value={phoneCallBooked ? 'booked' : 'not_booked'}
+              onChange={(e) => {
+                const booked = e.target.value === 'booked';
+                setPhoneCallBooked(booked);
+                if (!booked) {
+                  setCallDate('');
+                  setCallOutcome('');
+                }
+              }}
+              select
+              fullWidth
+            >
+              <MenuItem value="not_booked">Not Booked</MenuItem>
+              <MenuItem value="booked">Booked</MenuItem>
+            </TextField>
+            {phoneCallBooked && (
+              <TextField
+                label="Call Date"
+                type="date"
+                value={callDate}
+                onChange={(e) => setCallDate(e.target.value)}
+                slotProps={{ inputLabel: { shrink: true } }}
+                fullWidth
+              />
+            )}
+            {phoneCallBooked && (
+              <TextField
+                label="Call Outcome"
+                value={callOutcome}
+                onChange={(e) => setCallOutcome(e.target.value as CallOutcome)}
+                select
+                fullWidth
+              >
+                <MenuItem value="">--</MenuItem>
+                <MenuItem value="session_booked">Session Booked</MenuItem>
+                <MenuItem value="thinking_about_it">Thinking About It</MenuItem>
+                <MenuItem value="uninterested">Uninterested</MenuItem>
+                <MenuItem value="went_cold">Went Cold</MenuItem>
+              </TextField>
+            )}
           </Box>
           <TextField label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} multiline rows={3} fullWidth sx={{ mt: 2 }} />
         </CardContent>

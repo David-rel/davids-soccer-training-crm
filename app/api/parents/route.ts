@@ -1,6 +1,7 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { createFollowUpReminders } from '@/lib/reminders';
+import { parseDateAsArizona } from '@/lib/timezone';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -64,17 +65,45 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { name, email, phone, instagram_link, secondary_parent_name, dm_status, notes, players } = body;
+    const {
+      name,
+      email,
+      phone,
+      instagram_link,
+      secondary_parent_name,
+      dm_status,
+      phone_call_booked,
+      call_date_time,
+      call_outcome,
+      notes,
+      players
+    } = body;
 
     if (!name) {
       return errorResponse('Name is required', 400);
     }
 
+    let normalizedCallDateTime = call_date_time || null;
+    if (normalizedCallDateTime && typeof normalizedCallDateTime === 'string' && normalizedCallDateTime.length === 10) {
+      normalizedCallDateTime = parseDateAsArizona(normalizedCallDateTime);
+    }
+
     const result = await query(
-      `INSERT INTO crm_parents (name, email, phone, instagram_link, secondary_parent_name, dm_status, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO crm_parents (name, email, phone, instagram_link, secondary_parent_name, dm_status, phone_call_booked, call_date_time, call_outcome, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
-      [name, email || null, phone || null, instagram_link || null, secondary_parent_name || null, dm_status || null, notes || null]
+      [
+        name,
+        email || null,
+        phone || null,
+        instagram_link || null,
+        secondary_parent_name || null,
+        dm_status || null,
+        phone_call_booked === true,
+        normalizedCallDateTime,
+        call_outcome || null,
+        notes || null
+      ]
     );
 
     const parent = result.rows[0];
@@ -90,10 +119,25 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // If DM status is first_message, auto-create follow-up reminders
-    // (so you remember to text again if they don't reply)
-    if (dm_status === 'first_message') {
+    // Create DM follow-ups for all active DM stages.
+    if (dm_status === 'first_message' || dm_status === 'started_talking' || dm_status === 'request_phone_call') {
       await createFollowUpReminders(parent.id, 'dm_follow_up');
+    }
+
+    // Once a call is booked, they are past DM stage.
+    if (phone_call_booked === true) {
+      await query(
+        `DELETE FROM crm_reminders WHERE parent_id = $1 AND reminder_category = 'dm_follow_up' AND sent = false`,
+        [parent.id]
+      );
+    }
+
+    // Post-call follow-ups start when outcome is "thinking_about_it" or "went_cold".
+    if (call_outcome === 'thinking_about_it' || call_outcome === 'went_cold') {
+      await createFollowUpReminders(parent.id, 'post_call_follow_up', {
+        anchorDate: normalizedCallDateTime || new Date(),
+        anchorTimezone: 'arizona_local',
+      });
     }
 
     // Fetch the complete parent with players
