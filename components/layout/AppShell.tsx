@@ -20,6 +20,7 @@ import PeopleIcon from '@mui/icons-material/People';
 import EventIcon from '@mui/icons-material/Event';
 import CardGiftcardIcon from '@mui/icons-material/CardGiftcard';
 import StarIcon from '@mui/icons-material/Star';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 
@@ -31,6 +32,7 @@ const navItems = [
   { label: 'Customers', href: '/customers', icon: <StarIcon /> },
   { label: 'Sessions', href: '/sessions', icon: <EventIcon /> },
   { label: 'Packages', href: '/packages', icon: <CardGiftcardIcon /> },
+  { label: 'Finance Goals', href: '/finance-goals', icon: <AccountBalanceWalletIcon /> },
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {

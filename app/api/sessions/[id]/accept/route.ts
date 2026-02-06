@@ -9,7 +9,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { id } = await params;
     
     const result = await query(
-      `UPDATE crm_sessions SET status = 'accepted', updated_at = CURRENT_TIMESTAMP
+      `UPDATE crm_sessions
+       SET status = 'accepted', cancelled = false, updated_at = CURRENT_TIMESTAMP
        WHERE id = $1 RETURNING *`,
       [id]
     );
