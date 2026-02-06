@@ -47,7 +47,7 @@ interface DashboardData {
   todays_calls: Array<{ id: number; name: string; call_date_time: string | null; phone: string }>;
   todays_first_sessions: Array<{ id: number; parent_id: number; parent_name: string; player_names: string[] | null; player_ids: number[] | null; session_date: string; location: string | null; price: number | null; status: string }>;
   todays_sessions: Array<{ id: number; parent_id: number; parent_name: string; player_names: string[] | null; player_ids: number[] | null; session_date: string; location: string | null; price: number | null; status: string }>;
-  pending_reminders: Array<{ id: number; parent_name: string; parent_id: number; reminder_type: string; reminder_category: string; due_at: string; parent_dm_status: string | null }>;
+  pending_reminders: Array<{ id: number; parent_name: string; parent_id: number; reminder_type: string; reminder_category: string; due_at: string; due_yesterday?: boolean; parent_dm_status: string | null }>;
   stats: { total_contacts: number; sessions_this_week: number; revenue_this_month: number };
   selected_day_offset?: number;
 }
@@ -542,9 +542,19 @@ export default function DashboardPage() {
                 {group.items.map((reminder) => (
                   <Box key={reminder.id} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', p: 1.5, bgcolor: 'grey.50', borderRadius: 2, mb: 1 }}>
                     <Box sx={{ cursor: 'pointer' }} onClick={() => router.push(`/contacts/${reminder.parent_id}`)}>
-                      <Typography sx={{ fontWeight: 600 }}>
-                        Text {reminder.parent_name}
-                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                        <Typography sx={{ fontWeight: 600 }}>
+                          Text {reminder.parent_name}
+                        </Typography>
+                        {reminder.due_yesterday && (
+                          <Chip
+                            label="Due yesterday"
+                            size="small"
+                            color="warning"
+                            sx={{ height: 20, '& .MuiChip-label': { px: 1, fontSize: '0.7rem' } }}
+                          />
+                        )}
+                      </Box>
                       <Typography variant="body2" color="text.secondary">
                         {reminderTypeLabels[reminder.reminder_type] || reminder.reminder_type}
                       </Typography>

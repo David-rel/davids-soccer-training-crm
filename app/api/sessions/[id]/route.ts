@@ -1,5 +1,6 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
+import { createSessionReminders } from '@/lib/reminders';
 import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
 import { NextRequest } from 'next/server';
 
@@ -21,6 +22,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   try {
     const { id } = await params;
     const body = await request.json();
+    const shouldRefreshSessionReminders =
+      typeof body.session_date === 'string' && body.session_date.trim().length > 0;
 
     // Convert session_date from Arizona time to UTC if present
     if (body.session_date) {
@@ -50,7 +53,26 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       values
     );
     if (result.rows.length === 0) return errorResponse('Session not found', 404);
-    return jsonResponse(result.rows[0]);
+
+    const session = result.rows[0];
+    if (
+      shouldRefreshSessionReminders &&
+      session.status !== 'completed' &&
+      session.status !== 'cancelled' &&
+      !session.cancelled
+    ) {
+      await query(
+        `DELETE FROM crm_reminders
+         WHERE session_id = $1
+           AND reminder_category = 'session_reminder'
+           AND sent = false`,
+        [session.id]
+      );
+
+      await createSessionReminders(session.parent_id, session.session_date, { sessionId: session.id });
+    }
+
+    return jsonResponse(session);
   } catch (error) {
     console.error('Error updating session:', error);
     return errorResponse('Failed to update session');
