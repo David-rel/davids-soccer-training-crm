@@ -338,6 +338,32 @@ export async function POST(request: Request) {
     `);
     results.staleRemindersDeleted += deletedOldFollowUps.rowCount || 0;
 
+    // Deduplicate unsent follow-ups by Arizona calendar day, category and type.
+    // Keep the latest timestamp (usually the corrected 12:00 PM Arizona value).
+    const deletedDuplicateFollowUps = await query(`
+      WITH ranked AS (
+        SELECT
+          id,
+          ROW_NUMBER() OVER (
+            PARTITION BY
+              parent_id,
+              reminder_category,
+              reminder_type,
+              DATE((due_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')
+            ORDER BY due_at DESC, id DESC
+          ) AS rn
+        FROM crm_reminders
+        WHERE sent = false
+          AND reminder_category LIKE '%follow_up%'
+      )
+      DELETE FROM crm_reminders r
+      USING ranked
+      WHERE r.id = ranked.id
+        AND ranked.rn > 1
+      RETURNING r.id
+    `);
+    results.staleRemindersDeleted += deletedDuplicateFollowUps.rowCount || 0;
+
     return jsonResponse({
       success: true,
       timestamp: new Date().toISOString(),
