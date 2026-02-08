@@ -10,6 +10,8 @@ import Chip from '@mui/material/Chip';
 import Button from '@mui/material/Button';
 import LinearProgress from '@mui/material/LinearProgress';
 import Slider from '@mui/material/Slider';
+import TextField from '@mui/material/TextField';
+import Divider from '@mui/material/Divider';
 
 const packageTypeLabels: Record<string, string> = {
   '12_week_1x': '12 Weeks - 1x/week',
@@ -39,6 +41,13 @@ interface PackageDetail {
     was_paid: boolean;
     payment_method: string | null;
   }>;
+  payment_events: Array<{
+    id: number;
+    package_id: number;
+    amount: number | string;
+    notes: string | null;
+    created_at: string;
+  }>;
 }
 
 export const dynamic = 'force-dynamic';
@@ -50,6 +59,10 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [draftAmountReceived, setDraftAmountReceived] = useState(0);
   const [savingAmount, setSavingAmount] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentDate, setPaymentDate] = useState(
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Phoenix' }).format(new Date())
+  );
 
   const fetchPackage = useCallback(async () => {
     const res = await fetch(`/api/packages/${id}`);
@@ -73,31 +86,36 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
     fetchPackage();
   };
 
-  const saveAmountReceived = async (value: number) => {
+  const addPayment = async (amount: number, paidDate: string, notes: string) => {
     if (!pkg) return;
-    const priceCap = Number(pkg.price ?? 0);
-    const clamped = Math.min(Math.max(0, value), priceCap);
-    const current = Number(pkg.amount_received ?? 0);
-    if (Math.abs(clamped - current) < 0.01) return;
+    if (!Number.isFinite(amount) || amount <= 0) return;
 
     setSavingAmount(true);
-    const res = await fetch(`/api/packages/${id}`, {
-      method: 'PATCH',
+    const res = await fetch(`/api/packages/${id}/payments`, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        amount_received: clamped,
-        payment_note: 'slider_update_detail',
+        amount,
+        paid_date: paidDate,
+        notes,
       }),
     });
 
     if (res.ok) {
-      const updated = await res.json();
-      setPkg((prev) => (prev ? { ...prev, amount_received: Number(updated.amount_received ?? clamped) } : prev));
-      setDraftAmountReceived(Number(updated.amount_received ?? clamped));
-    } else {
-      setDraftAmountReceived(current);
+      await fetchPackage();
     }
     setSavingAmount(false);
+  };
+
+  const saveAmountReceived = async (value: number) => {
+    if (!pkg) return;
+    const priceCap = Number(pkg.price ?? 0);
+    const current = Number(pkg.amount_received ?? 0);
+    const clamped = Math.min(Math.max(current, value), priceCap);
+    if (Math.abs(clamped - current) < 0.01) return;
+    const delta = Number((clamped - current).toFixed(2));
+    await addPayment(delta, paymentDate, 'slider_top_up');
+    setDraftAmountReceived(clamped);
   };
 
   if (loading) return <Typography>Loading...</Typography>;
@@ -105,7 +123,8 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
 
   const progress = pkg.total_sessions > 0 ? (pkg.sessions_completed / pkg.total_sessions) * 100 : 0;
   const packagePrice = Number(pkg.price ?? 0);
-  const sliderValue = Math.min(Math.max(0, draftAmountReceived), packagePrice);
+  const currentReceived = Number(pkg.amount_received ?? 0);
+  const sliderValue = Math.min(Math.max(currentReceived, draftAmountReceived), packagePrice);
   const percentReceived = packagePrice > 0 ? (sliderValue / packagePrice) * 100 : 0;
 
   return (
@@ -151,9 +170,43 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
             Received so far: ${sliderValue.toFixed(2)} / ${packagePrice.toFixed(2)}
             {packagePrice > 0 ? ` (${percentReceived.toFixed(0)}%)` : ''}
           </Typography>
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '180px 1fr auto' }, gap: 1, mt: 1.5, alignItems: 'center' }}>
+            <TextField
+              size="small"
+              label="Payment Date"
+              type="date"
+              value={paymentDate}
+              onChange={(e) => setPaymentDate(e.target.value)}
+              slotProps={{ inputLabel: { shrink: true } }}
+              fullWidth
+            />
+            <TextField
+              size="small"
+              label="Add Amount ($)"
+              type="number"
+              value={paymentAmount}
+              onChange={(e) => setPaymentAmount(e.target.value)}
+              fullWidth
+            />
+            <Button
+              variant="contained"
+              disabled={savingAmount || !paymentAmount || packagePrice <= 0}
+              onClick={async () => {
+                const amount = Number(paymentAmount);
+                if (!Number.isFinite(amount) || amount <= 0) return;
+                const remaining = Number((packagePrice - currentReceived).toFixed(2));
+                const safeAmount = Math.min(amount, Math.max(0, remaining));
+                if (safeAmount <= 0) return;
+                await addPayment(safeAmount, paymentDate, 'manual_payment');
+                setPaymentAmount('');
+              }}
+            >
+              Add Payment
+            </Button>
+          </Box>
           <Slider
             value={sliderValue}
-            min={0}
+            min={currentReceived}
             max={packagePrice > 0 ? packagePrice : 0}
             step={1}
             disabled={packagePrice <= 0 || savingAmount}
@@ -172,6 +225,26 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
             <Typography variant="body2" color="text.secondary">
               Started: {new Date(pkg.start_date).toLocaleDateString()}
             </Typography>
+          )}
+          {pkg.payment_events.length > 0 && (
+            <>
+              <Divider sx={{ my: 1.5 }} />
+              <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>
+                Payment History
+              </Typography>
+              <Box sx={{ display: 'grid', gap: 0.75, maxHeight: 180, overflowY: 'auto' }}>
+                {pkg.payment_events.map((evt) => (
+                  <Box key={evt.id} sx={{ display: 'flex', justifyContent: 'space-between', gap: 1 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      {new Date(evt.created_at).toLocaleDateString()} {evt.notes ? `• ${evt.notes}` : ''}
+                    </Typography>
+                    <Typography variant="caption" sx={{ fontWeight: 700 }}>
+                      ${Number(evt.amount).toFixed(2)}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            </>
           )}
         </CardContent>
       </Card>

@@ -28,7 +28,19 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       [id]
     );
 
-    return jsonResponse({ ...pkgResult.rows[0], sessions: sessionsResult.rows });
+    const paymentEventsResult = await query(
+      `SELECT id, package_id, amount, notes, created_at
+       FROM crm_package_payment_events
+       WHERE package_id = $1
+       ORDER BY created_at DESC, id DESC`,
+      [id]
+    );
+
+    return jsonResponse({
+      ...pkgResult.rows[0],
+      sessions: sessionsResult.rows,
+      payment_events: paymentEventsResult.rows,
+    });
   } catch (error) {
     console.error('Error fetching package:', error);
     return errorResponse('Failed to fetch package');
@@ -41,10 +53,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     client = await getClient();
     const { id } = await params;
     const body = await request.json();
-    const paymentNote =
-      typeof body.payment_note === 'string' && body.payment_note.trim().length > 0
-        ? body.payment_note.trim()
-        : 'manual_package_adjustment';
 
     await client.query('BEGIN');
 
@@ -119,16 +127,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       `UPDATE crm_packages SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
       values
     );
-
-    const previousAmount = Number(currentPackage.amount_received ?? 0);
-    const delta = Number((nextAmountReceived - previousAmount).toFixed(2));
-    if (delta !== 0) {
-      await client.query(
-        `INSERT INTO crm_package_payment_events (package_id, amount, notes)
-         VALUES ($1, $2, $3)`,
-        [id, delta, paymentNote]
-      );
-    }
 
     await client.query('COMMIT');
     return jsonResponse(result.rows[0]);

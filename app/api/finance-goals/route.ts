@@ -92,9 +92,11 @@ function getTrackingStartWeekIsoArizona(): string {
 }
 
 const PAYMENTS_UNION_ALL = `
-  SELECT created_at AS paid_at, COALESCE(amount_received, 0)::numeric AS amount
-  FROM crm_packages
-  WHERE created_at <= $1
+  SELECT created_at AS paid_at, amount::numeric AS amount
+  FROM crm_package_payment_events
+  WHERE amount > 0
+    AND (notes IS NULL OR notes IN ('initial_package_amount', 'manual_payment', 'slider_top_up', 'package_payment'))
+    AND created_at <= $1
   UNION ALL
   SELECT session_date AS paid_at, price::numeric AS amount
   FROM crm_first_sessions
@@ -112,9 +114,11 @@ const PAYMENTS_UNION_ALL = `
 `;
 
 const PAYMENTS_UNION_FILTERED = `
-  SELECT created_at AS paid_at, COALESCE(amount_received, 0)::numeric AS amount
-  FROM crm_packages
-  WHERE created_at >= $1
+  SELECT created_at AS paid_at, amount::numeric AS amount
+  FROM crm_package_payment_events
+  WHERE amount > 0
+    AND (notes IS NULL OR notes IN ('initial_package_amount', 'manual_payment', 'slider_top_up', 'package_payment'))
+    AND created_at >= $1
     AND created_at <= $2
     AND created_at <= $3
   UNION ALL
@@ -205,9 +209,11 @@ export async function GET() {
             source,
             COALESCE(SUM(amount), 0) AS amount
           FROM (
-            SELECT created_at AS paid_at, COALESCE(amount_received, 0)::numeric AS amount, 'packages'::text AS source
-            FROM crm_packages
-            WHERE created_at >= $1
+            SELECT created_at AS paid_at, amount::numeric AS amount, 'packages'::text AS source
+            FROM crm_package_payment_events
+            WHERE amount > 0
+              AND (notes IS NULL OR notes IN ('initial_package_amount', 'manual_payment', 'slider_top_up', 'package_payment'))
+              AND created_at >= $1
               AND created_at <= $2
               AND created_at <= $3
             UNION ALL
@@ -266,9 +272,11 @@ export async function GET() {
       query(
         `
           WITH payments AS (
-            SELECT created_at AS paid_at, COALESCE(amount_received, 0)::numeric AS amount
-            FROM crm_packages
-            WHERE created_at >= $1
+            SELECT created_at AS paid_at, amount::numeric AS amount
+            FROM crm_package_payment_events
+            WHERE amount > 0
+              AND (notes IS NULL OR notes IN ('initial_package_amount', 'manual_payment', 'slider_top_up', 'package_payment'))
+              AND created_at >= $1
               AND created_at < $2
             UNION ALL
             SELECT session_date AS paid_at, price::numeric AS amount

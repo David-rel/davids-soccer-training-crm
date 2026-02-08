@@ -35,10 +35,31 @@ export async function GET(request: NextRequest) {
     let sql = `
       SELECT p.*,
         (SELECT COUNT(*) FROM crm_players WHERE parent_id = p.id) as player_count,
-        (SELECT COUNT(*) FROM crm_first_sessions WHERE parent_id = p.id AND showed_up = true) as first_sessions_count,
-        (SELECT COUNT(*) FROM crm_sessions WHERE parent_id = p.id AND showed_up = true) as sessions_count,
-        (SELECT COALESCE(SUM(price), 0) FROM crm_first_sessions WHERE parent_id = p.id AND was_paid = true)
-        + (SELECT COALESCE(SUM(price), 0) FROM crm_sessions WHERE parent_id = p.id AND was_paid = true) as total_paid,
+        (SELECT COUNT(*)
+         FROM crm_first_sessions
+         WHERE parent_id = p.id
+           AND COALESCE(cancelled, false) = false
+           AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))) as first_sessions_count,
+        (SELECT COUNT(*)
+         FROM crm_sessions
+         WHERE parent_id = p.id
+           AND COALESCE(cancelled, false) = false
+           AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))) as sessions_count,
+        (SELECT COALESCE(SUM(price), 0)
+         FROM crm_first_sessions
+         WHERE parent_id = p.id
+           AND price IS NOT NULL
+           AND COALESCE(cancelled, false) = false
+           AND (status IS NULL OR status NOT IN ('cancelled', 'no_show')))
+        + (SELECT COALESCE(SUM(price), 0)
+           FROM crm_sessions
+           WHERE parent_id = p.id
+             AND price IS NOT NULL
+             AND COALESCE(cancelled, false) = false
+             AND (status IS NULL OR status NOT IN ('cancelled', 'no_show')))
+        + (SELECT COALESCE(SUM(amount_received), 0)
+           FROM crm_packages
+           WHERE parent_id = p.id) as total_paid,
         (SELECT package_type FROM crm_packages WHERE parent_id = p.id AND is_active = true LIMIT 1) as active_package_type,
         (SELECT ARRAY_AGG(name ORDER BY created_at) FROM crm_players WHERE parent_id = p.id) as player_names
       FROM crm_parents p
