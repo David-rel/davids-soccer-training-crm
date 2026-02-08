@@ -1,10 +1,27 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { createFollowUpReminders } from '@/lib/reminders';
-import { parseDateAsArizona } from '@/lib/timezone';
+import { parseDateAsArizona, parseDatetimeLocalAsArizona } from '@/lib/timezone';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
+
+function normalizeCallDateTimeInput(value: unknown): unknown {
+  if (typeof value !== 'string' || value.trim().length === 0) return value;
+
+  const normalized = value.trim();
+  const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/.test(normalized);
+
+  if (normalized.length === 10) {
+    return parseDateAsArizona(normalized);
+  }
+
+  if (!hasTimezone) {
+    return parseDatetimeLocalAsArizona(normalized.replace(' ', 'T'));
+  }
+
+  return normalized;
+}
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -55,12 +72,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const values: unknown[] = [];
     let paramIndex = 1;
 
-    // Convert call_date_time from Arizona time to UTC if present
-    // The frontend sends date-only strings like "2026-02-06" which should be
-    // interpreted as midnight Arizona time, not midnight UTC
-    if (body.call_date_time && typeof body.call_date_time === 'string' && body.call_date_time.length === 10) {
-      // Date-only format (YYYY-MM-DD) - convert to UTC
-      body.call_date_time = parseDateAsArizona(body.call_date_time);
+    // Normalize date-only/datetime call values as Arizona local time.
+    if ('call_date_time' in body && body.call_date_time) {
+      body.call_date_time = normalizeCallDateTimeInput(body.call_date_time);
     }
 
     const allowedFields = [
@@ -71,7 +85,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     for (const field of allowedFields) {
       if (field in body) {
-        fields.push(`${field} = $${paramIndex}`);
+        if (field === 'call_date_time' && body[field] !== null) {
+          fields.push(`${field} = ($${paramIndex}::timestamptz AT TIME ZONE 'UTC')`);
+        } else {
+          fields.push(`${field} = $${paramIndex}`);
+        }
         values.push(body[field]);
         paramIndex++;
       }

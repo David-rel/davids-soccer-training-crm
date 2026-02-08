@@ -32,11 +32,6 @@ export async function GET(request: NextRequest) {
       selectedEnd = selectedBounds.end;
     }
 
-    // Carry unsent reminders into the next day pool.
-    const carryoverArizonaDate = nowInArizona();
-    carryoverArizonaDate.setDate(carryoverArizonaDate.getDate() + dayOffset - 1);
-    const { start: carryoverStart } = getDateBoundsArizona(carryoverArizonaDate);
-
     // Selected-day phone calls.
     // For today, keep undated calls visible; for future days, only show dated calls in that day window.
     const callsResult = dayOffset === 0
@@ -93,14 +88,20 @@ export async function GET(request: NextRequest) {
       [selectedStart, selectedEnd]
     );
 
-    // Selected-day pending reminders (for dashboard section) plus unsent carryover from previous day.
+    // Selected-day pending reminders (for dashboard section) plus all unsent overdue carryover.
     // Include secondary parent in display name.
     // IMPORTANT: Use Arizona day boundaries, not due_at::date, because timestamps are stored
     // as UTC-coded values and date-only comparison can surface the wrong reminder type/day.
     const remindersResult = await query(
       `
       SELECT r.*,
-        (r.due_at < $3) as due_yesterday,
+        GREATEST(
+          0,
+          (
+            DATE(($1::timestamptz AT TIME ZONE 'America/Phoenix'))
+            - DATE((r.due_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')
+          )
+        )::int as due_days_ago,
         p.dm_status as parent_dm_status,
         CASE
           WHEN p.secondary_parent_name IS NOT NULL AND TRIM(COALESCE(p.secondary_parent_name, '')) != ''
@@ -110,11 +111,10 @@ export async function GET(request: NextRequest) {
       FROM crm_reminders r
       JOIN crm_parents p ON p.id = r.parent_id
       WHERE r.sent = false
-        AND r.due_at >= $1
         AND r.due_at <= $2
-      ORDER BY due_yesterday DESC, r.due_at ASC
+      ORDER BY due_days_ago DESC, r.due_at ASC
     `,
-      [carryoverStart, selectedEnd, selectedStart]
+      [selectedStart, selectedEnd]
     );
 
     // Stats - use Arizona time for week/month boundaries

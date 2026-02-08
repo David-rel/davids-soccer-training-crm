@@ -1,10 +1,29 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { createFollowUpReminders } from '@/lib/reminders';
-import { parseDateAsArizona } from '@/lib/timezone';
+import { parseDateAsArizona, parseDatetimeLocalAsArizona } from '@/lib/timezone';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
+
+function normalizeCallDateTimeInput(value: unknown): unknown {
+  if (typeof value !== 'string' || value.trim().length === 0) return value;
+
+  const normalized = value.trim();
+  const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/.test(normalized);
+
+  // Date-only: interpret as Arizona midnight
+  if (normalized.length === 10) {
+    return parseDateAsArizona(normalized);
+  }
+
+  // Datetime without timezone: interpret as Arizona local datetime
+  if (!hasTimezone) {
+    return parseDatetimeLocalAsArizona(normalized.replace(' ', 'T'));
+  }
+
+  return normalized;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -84,13 +103,11 @@ export async function POST(request: NextRequest) {
     }
 
     let normalizedCallDateTime = call_date_time || null;
-    if (normalizedCallDateTime && typeof normalizedCallDateTime === 'string' && normalizedCallDateTime.length === 10) {
-      normalizedCallDateTime = parseDateAsArizona(normalizedCallDateTime);
-    }
+    normalizedCallDateTime = normalizeCallDateTimeInput(normalizedCallDateTime);
 
     const result = await query(
       `INSERT INTO crm_parents (name, email, phone, instagram_link, secondary_parent_name, dm_status, phone_call_booked, call_date_time, call_outcome, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, ($8::timestamptz AT TIME ZONE 'UTC'), $9, $10)
        RETURNING *`,
       [
         name,

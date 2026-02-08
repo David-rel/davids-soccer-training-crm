@@ -47,7 +47,7 @@ interface DashboardData {
   todays_calls: Array<{ id: number; name: string; call_date_time: string | null; phone: string }>;
   todays_first_sessions: Array<{ id: number; parent_id: number; parent_name: string; player_names: string[] | null; player_ids: number[] | null; session_date: string; location: string | null; price: number | null; status: string }>;
   todays_sessions: Array<{ id: number; parent_id: number; parent_name: string; player_names: string[] | null; player_ids: number[] | null; session_date: string; location: string | null; price: number | null; status: string }>;
-  pending_reminders: Array<{ id: number; parent_name: string; parent_id: number; reminder_type: string; reminder_category: string; due_at: string; due_yesterday?: boolean; parent_dm_status: string | null }>;
+  pending_reminders: Array<{ id: number; parent_name: string; parent_id: number; reminder_type: string; reminder_category: string; due_at: string; due_days_ago?: number; parent_dm_status: string | null }>;
   stats: { total_contacts: number; sessions_this_week: number; revenue_this_month: number };
   selected_day_offset?: number;
 }
@@ -546,11 +546,11 @@ export default function DashboardPage() {
                         <Typography sx={{ fontWeight: 600 }}>
                           Text {reminder.parent_name}
                         </Typography>
-                        {reminder.due_yesterday && (
+                        {(reminder.due_days_ago ?? 0) > 0 && (
                           <Chip
-                            label="Due yesterday"
+                            label={(reminder.due_days_ago ?? 0) === 1 ? 'Due yesterday' : `Due ${reminder.due_days_ago} days ago`}
                             size="small"
-                            color="warning"
+                            color={(reminder.due_days_ago ?? 0) > 1 ? 'error' : 'warning'}
                             sx={{ height: 20, '& .MuiChip-label': { px: 1, fontSize: '0.7rem' } }}
                           />
                         )}
