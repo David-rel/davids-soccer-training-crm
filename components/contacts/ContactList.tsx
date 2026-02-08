@@ -28,22 +28,37 @@ interface ParentRow extends Parent {
 // Helper to determine if a lead is going cold
 function isGoingCold(parent: ParentRow): { cold: boolean; daysInactive: number } {
   if (!parent.last_activity_at) return { cold: false, daysInactive: 0 };
+
+  // Only show "Going Cold" for pre-customer leads that are stalled.
+  if (
+    parent.is_customer ||
+    parent.active_package_type ||
+    parent.call_outcome === 'session_booked'
+  ) {
+    return { cold: false, daysInactive: 0 };
+  }
   
   const lastActivity = new Date(parent.last_activity_at);
   const now = new Date();
   const daysInactive = Math.floor((now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24));
   
-  // Different thresholds based on stage
-  let threshold = 7; // default
-  
+  // Different thresholds based on lead stage
+  let threshold: number | null = null;
+
   if (parent.dm_status === 'first_message') {
     threshold = 2;
   } else if (parent.dm_status === 'started_talking' || parent.dm_status === 'request_phone_call') {
     threshold = 3;
-  } else if (parent.phone_call_booked) {
+  } else if (
+    parent.phone_call_booked ||
+    parent.call_outcome === 'thinking_about_it' ||
+    parent.call_outcome === 'went_cold'
+  ) {
     threshold = 5;
-  } else if (parent.is_customer) {
-    threshold = 14;
+  }
+
+  if (threshold === null) {
+    return { cold: false, daysInactive };
   }
   
   return { cold: daysInactive >= threshold, daysInactive };

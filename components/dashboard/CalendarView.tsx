@@ -147,14 +147,14 @@ export default function CalendarView() {
         const data: DashboardData = await res.json();
         const calendarEvents: CalendarEvent[] = [];
 
-        // Sort priority offsets (subtracted from start time in ms)
-        // Lower priority number = appears first: green(session) → orange(first_session) → purple(session reminder) → blue(call/follow-up)
-        const SORT_OFFSETS: Record<string, number> = {
-          session: 5,      // green - first
-          first_session: 4, // orange - second
-          call: 3,         // red - third
-          session_reminder: 2, // purple - fourth
-          follow_up_reminder: 0, // blue - fifth
+        // Display order when multiple events share the same start time.
+        // Keep timestamps exact (no ms hacks), sort in-memory instead.
+        const SORT_PRIORITY: Record<string, number> = {
+          session: 0,
+          first_session: 1,
+          call: 2,
+          session_reminder: 3,
+          follow_up_reminder: 4,
         };
 
         const getSortKey = (type: string, reminderType?: string): string => {
@@ -174,7 +174,7 @@ export default function CalendarView() {
           calendarEvents.push({
             id: `call-${call.id}`,
             title: `📞 Call: ${call.name}`,
-            start: new Date(startDate.getTime() - SORT_OFFSETS.call),
+            start: startDate,
             end: endDate,
             type: "call",
             resource: {
@@ -192,7 +192,7 @@ export default function CalendarView() {
           calendarEvents.push({
             id: `first-session-${session.id}`,
             title: `⭐ First Session: ${session.parent_name}`,
-            start: new Date(startDate.getTime() - SORT_OFFSETS.first_session),
+            start: startDate,
             end: endDate,
             type: "first_session",
             resource: {
@@ -213,7 +213,7 @@ export default function CalendarView() {
           calendarEvents.push({
             id: `session-${session.id}`,
             title: `⚽ Session: ${session.parent_name}`,
-            start: new Date(startDate.getTime() - SORT_OFFSETS.session),
+            start: startDate,
             end: endDate,
             type: "session",
             resource: {
@@ -230,11 +230,10 @@ export default function CalendarView() {
         // Add ALL reminders for calendar
         data.upcomingReminders?.forEach((reminder) => {
           const dueDate = toCalendarDate(reminder.due_at);
-          const sortKey = getSortKey("reminder", reminder.reminder_type);
           calendarEvents.push({
             id: `reminder-${reminder.id}`,
             title: `💬 Message: ${reminder.parent_name}`,
-            start: new Date(dueDate.getTime() - (SORT_OFFSETS[sortKey] || 0)),
+            start: dueDate,
             end: dueDate,
             type: "reminder",
             resource: {
@@ -245,6 +244,22 @@ export default function CalendarView() {
               originalEnd: dueDate,
             },
           });
+        });
+
+        calendarEvents.sort((a, b) => {
+          const aStart = (a.resource?.originalStart ?? a.start).getTime();
+          const bStart = (b.resource?.originalStart ?? b.start).getTime();
+          if (aStart !== bStart) return aStart - bStart;
+
+          const aSortKey = getSortKey(a.type, a.resource?.reminder_type);
+          const bSortKey = getSortKey(b.type, b.resource?.reminder_type);
+          const aPriority = SORT_PRIORITY[aSortKey] ?? 99;
+          const bPriority = SORT_PRIORITY[bSortKey] ?? 99;
+          if (aPriority !== bPriority) return aPriority - bPriority;
+
+          const aEnd = (a.resource?.originalEnd ?? a.end).getTime();
+          const bEnd = (b.resource?.originalEnd ?? b.end).getTime();
+          return aEnd - bEnd;
         });
 
         setEvents(calendarEvents);
