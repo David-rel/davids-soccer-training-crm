@@ -1,4 +1,4 @@
-import { query } from '@/lib/db';
+import { getClient, query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { NextRequest } from 'next/server';
 
@@ -36,37 +36,108 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 }
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let client: Awaited<ReturnType<typeof getClient>> | null = null;
   try {
+    client = await getClient();
     const { id } = await params;
     const body = await request.json();
+    const paymentNote =
+      typeof body.payment_note === 'string' && body.payment_note.trim().length > 0
+        ? body.payment_note.trim()
+        : 'manual_package_adjustment';
+
+    await client.query('BEGIN');
+
+    const currentResult = await client.query(
+      `SELECT id, price, amount_received FROM crm_packages WHERE id = $1 FOR UPDATE`,
+      [id]
+    );
+    if (currentResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return errorResponse('Package not found', 404);
+    }
+    const currentPackage = currentResult.rows[0];
 
     const fields: string[] = [];
     const values: unknown[] = [];
     let paramIndex = 1;
 
-    const allowedFields = ['price', 'start_date', 'is_active', 'sessions_completed'];
+    const allowedFields = ['price', 'start_date', 'is_active', 'sessions_completed', 'amount_received'];
     for (const field of allowedFields) {
       if (field in body) {
-        fields.push(`${field} = $${paramIndex}`);
-        values.push(body[field]);
+        if (field === 'price') {
+          const parsed = body[field] == null ? null : Number(body[field]);
+          if (parsed != null && !Number.isFinite(parsed)) {
+            await client.query('ROLLBACK');
+            return errorResponse(`Invalid ${field}`, 400);
+          }
+          fields.push(`${field} = $${paramIndex}`);
+          values.push(parsed);
+        } else if (field === 'amount_received') {
+          const parsed = body[field] == null ? 0 : Number(body[field]);
+          if (!Number.isFinite(parsed)) {
+            await client.query('ROLLBACK');
+            return errorResponse(`Invalid ${field}`, 400);
+          }
+          fields.push(`${field} = $${paramIndex}`);
+          values.push(parsed);
+        } else {
+          fields.push(`${field} = $${paramIndex}`);
+          values.push(body[field]);
+        }
         paramIndex++;
       }
     }
 
-    if (fields.length === 0) return errorResponse('No fields to update', 400);
+    if (fields.length === 0) {
+      await client.query('ROLLBACK');
+      return errorResponse('No fields to update', 400);
+    }
+
+    const nextPrice =
+      body.price !== undefined
+        ? (body.price == null ? null : Number(body.price))
+        : (currentPackage.price == null ? null : Number(currentPackage.price));
+    const nextAmountReceived =
+      body.amount_received !== undefined
+        ? (body.amount_received == null ? 0 : Number(body.amount_received))
+        : Number(currentPackage.amount_received ?? 0);
+
+    if (!Number.isFinite(nextAmountReceived) || nextAmountReceived < 0) {
+      await client.query('ROLLBACK');
+      return errorResponse('Invalid amount_received', 400);
+    }
+    if (nextPrice != null && nextAmountReceived > nextPrice) {
+      await client.query('ROLLBACK');
+      return errorResponse('Amount received cannot be greater than package price', 400);
+    }
 
     fields.push('updated_at = CURRENT_TIMESTAMP');
     values.push(id);
 
-    const result = await query(
+    const result = await client.query(
       `UPDATE crm_packages SET ${fields.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
       values
     );
-    if (result.rows.length === 0) return errorResponse('Package not found', 404);
+
+    const previousAmount = Number(currentPackage.amount_received ?? 0);
+    const delta = Number((nextAmountReceived - previousAmount).toFixed(2));
+    if (delta !== 0) {
+      await client.query(
+        `INSERT INTO crm_package_payment_events (package_id, amount, notes)
+         VALUES ($1, $2, $3)`,
+        [id, delta, paymentNote]
+      );
+    }
+
+    await client.query('COMMIT');
     return jsonResponse(result.rows[0]);
   } catch (error) {
+    if (client) await client.query('ROLLBACK');
     console.error('Error updating package:', error);
     return errorResponse('Failed to update package');
+  } finally {
+    if (client) client.release();
   }
 }
 

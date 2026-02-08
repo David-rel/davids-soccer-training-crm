@@ -92,9 +92,9 @@ function getTrackingStartWeekIsoArizona(): string {
 }
 
 const PAYMENTS_UNION_ALL = `
-  SELECT created_at AS paid_at, price::numeric AS amount
+  SELECT created_at AS paid_at, COALESCE(amount_received, 0)::numeric AS amount
   FROM crm_packages
-  WHERE price IS NOT NULL AND created_at <= $1
+  WHERE created_at <= $1
   UNION ALL
   SELECT session_date AS paid_at, price::numeric AS amount
   FROM crm_first_sessions
@@ -112,10 +112,9 @@ const PAYMENTS_UNION_ALL = `
 `;
 
 const PAYMENTS_UNION_FILTERED = `
-  SELECT created_at AS paid_at, price::numeric AS amount
+  SELECT created_at AS paid_at, COALESCE(amount_received, 0)::numeric AS amount
   FROM crm_packages
-  WHERE price IS NOT NULL
-    AND created_at >= $1
+  WHERE created_at >= $1
     AND created_at <= $2
     AND created_at <= $3
   UNION ALL
@@ -206,10 +205,9 @@ export async function GET() {
             source,
             COALESCE(SUM(amount), 0) AS amount
           FROM (
-            SELECT created_at AS paid_at, price::numeric AS amount, 'packages'::text AS source
+            SELECT created_at AS paid_at, COALESCE(amount_received, 0)::numeric AS amount, 'packages'::text AS source
             FROM crm_packages
-            WHERE price IS NOT NULL
-              AND created_at >= $1
+            WHERE created_at >= $1
               AND created_at <= $2
               AND created_at <= $3
             UNION ALL
@@ -268,10 +266,9 @@ export async function GET() {
       query(
         `
           WITH payments AS (
-            SELECT created_at AS paid_at, price::numeric AS amount
+            SELECT created_at AS paid_at, COALESCE(amount_received, 0)::numeric AS amount
             FROM crm_packages
-            WHERE price IS NOT NULL
-              AND created_at >= $1
+            WHERE created_at >= $1
               AND created_at < $2
             UNION ALL
             SELECT session_date AS paid_at, price::numeric AS amount

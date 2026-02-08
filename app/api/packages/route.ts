@@ -23,7 +23,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { parent_id, package_type, price, start_date } = body;
+    const { parent_id, package_type, price, start_date, amount_received } = body;
 
     if (!parent_id || !package_type) {
       return errorResponse('Parent and package type are required', 400);
@@ -39,12 +39,39 @@ export async function POST(request: NextRequest) {
     const totalSessions = totalSessionsMap[package_type];
     if (!totalSessions) return errorResponse('Invalid package type', 400);
 
+    const parsedPrice = price == null ? null : Number(price);
+    if (parsedPrice != null && !Number.isFinite(parsedPrice)) {
+      return errorResponse('Invalid package price', 400);
+    }
+
+    const initialAmountReceived =
+      amount_received == null
+        ? 0
+        : Number(amount_received);
+
+    if (!Number.isFinite(initialAmountReceived) || initialAmountReceived < 0) {
+      return errorResponse('Invalid amount received', 400);
+    }
+
+    if (parsedPrice != null && initialAmountReceived > parsedPrice) {
+      return errorResponse('Amount received cannot be greater than package price', 400);
+    }
+
     const result = await query(
-      `INSERT INTO crm_packages (parent_id, package_type, total_sessions, price, start_date)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO crm_packages (parent_id, package_type, total_sessions, price, start_date, amount_received)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [parent_id, package_type, totalSessions, price || null, start_date || null]
+      [parent_id, package_type, totalSessions, parsedPrice, start_date || null, initialAmountReceived]
     );
+    const createdPackage = result.rows[0];
+
+    if (initialAmountReceived !== 0) {
+      await query(
+        `INSERT INTO crm_package_payment_events (package_id, amount, notes, created_at)
+         VALUES ($1, $2, $3, $4)`,
+        [createdPackage.id, initialAmountReceived, 'initial_package_amount', createdPackage.created_at]
+      );
+    }
 
     // Update parent interest_in_package
     await query(
@@ -52,7 +79,7 @@ export async function POST(request: NextRequest) {
       [parent_id]
     );
 
-    return jsonResponse(result.rows[0], 201);
+    return jsonResponse(createdPackage, 201);
   } catch (error) {
     console.error('Error creating package:', error);
     return errorResponse('Failed to create package');

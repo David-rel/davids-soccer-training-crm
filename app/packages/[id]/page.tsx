@@ -9,6 +9,7 @@ import Typography from '@mui/material/Typography';
 import Chip from '@mui/material/Chip';
 import Button from '@mui/material/Button';
 import LinearProgress from '@mui/material/LinearProgress';
+import Slider from '@mui/material/Slider';
 
 const packageTypeLabels: Record<string, string> = {
   '12_week_1x': '12 Weeks - 1x/week',
@@ -26,6 +27,7 @@ interface PackageDetail {
   total_sessions: number;
   sessions_completed: number;
   price: number | null;
+  amount_received: number | null;
   start_date: string | null;
   is_active: boolean;
   sessions: Array<{
@@ -46,10 +48,16 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const [pkg, setPkg] = useState<PackageDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [draftAmountReceived, setDraftAmountReceived] = useState(0);
+  const [savingAmount, setSavingAmount] = useState(false);
 
   const fetchPackage = useCallback(async () => {
     const res = await fetch(`/api/packages/${id}`);
-    if (res.ok) setPkg(await res.json());
+    if (res.ok) {
+      const data: PackageDetail = await res.json();
+      setPkg(data);
+      setDraftAmountReceived(Number(data.amount_received ?? 0));
+    }
     setLoading(false);
   }, [id]);
 
@@ -65,10 +73,40 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
     fetchPackage();
   };
 
+  const saveAmountReceived = async (value: number) => {
+    if (!pkg) return;
+    const priceCap = Number(pkg.price ?? 0);
+    const clamped = Math.min(Math.max(0, value), priceCap);
+    const current = Number(pkg.amount_received ?? 0);
+    if (Math.abs(clamped - current) < 0.01) return;
+
+    setSavingAmount(true);
+    const res = await fetch(`/api/packages/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amount_received: clamped,
+        payment_note: 'slider_update_detail',
+      }),
+    });
+
+    if (res.ok) {
+      const updated = await res.json();
+      setPkg((prev) => (prev ? { ...prev, amount_received: Number(updated.amount_received ?? clamped) } : prev));
+      setDraftAmountReceived(Number(updated.amount_received ?? clamped));
+    } else {
+      setDraftAmountReceived(current);
+    }
+    setSavingAmount(false);
+  };
+
   if (loading) return <Typography>Loading...</Typography>;
   if (!pkg) return <Typography>Package not found.</Typography>;
 
   const progress = pkg.total_sessions > 0 ? (pkg.sessions_completed / pkg.total_sessions) * 100 : 0;
+  const packagePrice = Number(pkg.price ?? 0);
+  const sliderValue = Math.min(Math.max(0, draftAmountReceived), packagePrice);
+  const percentReceived = packagePrice > 0 ? (sliderValue / packagePrice) * 100 : 0;
 
   return (
     <Box>
@@ -107,6 +145,27 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
           {pkg.price && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
               Package price: ${pkg.price}
+            </Typography>
+          )}
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            Received so far: ${sliderValue.toFixed(2)} / ${packagePrice.toFixed(2)}
+            {packagePrice > 0 ? ` (${percentReceived.toFixed(0)}%)` : ''}
+          </Typography>
+          <Slider
+            value={sliderValue}
+            min={0}
+            max={packagePrice > 0 ? packagePrice : 0}
+            step={1}
+            disabled={packagePrice <= 0 || savingAmount}
+            valueLabelDisplay="auto"
+            valueLabelFormat={(value) => `$${Number(value).toFixed(0)}`}
+            onChange={(_, value) => setDraftAmountReceived(value as number)}
+            onChangeCommitted={(_, value) => saveAmountReceived(value as number)}
+            sx={{ mt: 1 }}
+          />
+          {packagePrice <= 0 && (
+            <Typography variant="caption" color="text.secondary">
+              Add package price to track money received.
             </Typography>
           )}
           {pkg.start_date && (
