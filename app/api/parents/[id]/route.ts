@@ -58,6 +58,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
+    const parentId = Number(id);
     const body = await request.json();
 
     // Check if parent exists
@@ -128,7 +129,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       );
       // Create fresh 1/3/7/14 day follow-ups from now
       // (covers: first message no reply, started talking then ghosted, asked for call then ghosted, went cold)
-      await createFollowUpReminders(parseInt(id), 'dm_follow_up');
+      await createFollowUpReminders(parentId, 'dm_follow_up');
     }
 
     // Phone call booked — they've moved past DMs, cancel DM follow-ups
@@ -139,24 +140,31 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       );
     }
 
-    // Post-call ghost scenario
-    if ((body.call_outcome === 'thinking_about_it' || body.call_outcome === 'went_cold') &&
-        oldParent.call_outcome !== body.call_outcome) {
+    const callOutcomeChanged =
+      'call_outcome' in body && body.call_outcome !== oldParent.call_outcome;
+    const callDateChanged = 'call_date_time' in body;
+    const phoneCallBookedChanged =
+      'phone_call_booked' in body && body.phone_call_booked !== oldParent.phone_call_booked;
+    const shouldResyncPostCallFollowUps =
+      callOutcomeChanged || callDateChanged || phoneCallBookedChanged;
+    const shouldHavePostCallFollowUps =
+      newParent.phone_call_booked === true &&
+      (!newParent.call_outcome ||
+        newParent.call_outcome === 'thinking_about_it' ||
+        newParent.call_outcome === 'went_cold');
+
+    if (shouldResyncPostCallFollowUps) {
       await query(
         `DELETE FROM crm_reminders WHERE parent_id = $1 AND reminder_category = 'post_call_follow_up' AND sent = false`,
         [id]
       );
-      await createFollowUpReminders(parseInt(id), 'post_call_follow_up', {
-        anchorDate: newParent.call_date_time || body.call_date_time || new Date(),
-        anchorTimezone: 'arizona_local',
-      });
-    }
-    // If they book a session after the call, cancel post-call follow-ups
-    if (body.call_outcome === 'session_booked' && oldParent.call_outcome !== 'session_booked') {
-      await query(
-        `DELETE FROM crm_reminders WHERE parent_id = $1 AND reminder_category = 'post_call_follow_up' AND sent = false`,
-        [id]
-      );
+
+      if (shouldHavePostCallFollowUps) {
+        await createFollowUpReminders(parentId, 'post_call_follow_up', {
+          anchorDate: newParent.call_date_time || new Date(),
+          anchorTimezone: 'arizona_local',
+        });
+      }
     }
 
     return jsonResponse(newParent);

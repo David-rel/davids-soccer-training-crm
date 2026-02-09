@@ -170,8 +170,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Post-call follow-ups start when outcome is "thinking_about_it" or "went_cold".
-    if (call_outcome === 'thinking_about_it' || call_outcome === 'went_cold') {
+    // Pre-schedule post-call follow-ups as soon as a call is logged/booked.
+    // They remain anchored to the call date and are cleared if the lead progresses.
+    const shouldCreatePostCallFollowUps =
+      phone_call_booked === true &&
+      (!call_outcome ||
+        call_outcome === 'thinking_about_it' ||
+        call_outcome === 'went_cold');
+
+    if (shouldCreatePostCallFollowUps) {
       await createFollowUpReminders(parent.id, 'post_call_follow_up', {
         anchorDate: normalizedCallDateTime || new Date(),
         anchorTimezone: 'arizona_local',
