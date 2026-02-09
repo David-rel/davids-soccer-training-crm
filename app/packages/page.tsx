@@ -26,6 +26,11 @@ const packageTypeLabels: Record<string, string> = {
   '6_week_2x': '6 Weeks - 2x/week (12 sessions)',
 };
 
+const currency = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+});
+
 interface PackageRow {
   id: number;
   parent_id: number;
@@ -34,7 +39,8 @@ interface PackageRow {
   package_type: string;
   total_sessions: number;
   sessions_completed: number;
-  price: number | null;
+  price: number | string | null;
+  amount_received: number | string | null;
   start_date: string | null;
   is_active: boolean;
 }
@@ -111,10 +117,22 @@ export default function PackagesPage() {
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {packages.map((pkg) => {
             const progress = pkg.total_sessions > 0 ? (pkg.sessions_completed / pkg.total_sessions) * 100 : 0;
+            const packagePrice = Number(pkg.price ?? 0);
+            const amountReceived = Number(pkg.amount_received ?? 0);
+            const hasPrice = packagePrice > 0;
+            const safeAmountReceived = hasPrice ? Math.min(amountReceived, packagePrice) : amountReceived;
+            const paymentProgress = hasPrice ? Math.min((safeAmountReceived / packagePrice) * 100, 100) : 0;
+
             return (
-              <Card key={pkg.id}>
+              <Card
+                key={pkg.id}
+                sx={{
+                  borderLeft: 4,
+                  borderColor: pkg.is_active ? 'success.main' : 'divider',
+                }}
+              >
                 <CardActionArea onClick={() => router.push(`/packages/${pkg.id}`)}>
-                  <CardContent>
+                  <CardContent sx={{ py: 2 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                       <Box>
                         <Typography sx={{ fontWeight: 600 }}>
@@ -131,17 +149,37 @@ export default function PackagesPage() {
                       </Box>
                       <Box sx={{ textAlign: 'right' }}>
                         <Chip label={pkg.is_active ? 'Active' : 'Completed'} color={pkg.is_active ? 'success' : 'default'} size="small" />
-                        {pkg.price && <Typography variant="body2" sx={{ mt: 0.5 }}>${pkg.price}</Typography>}
+                        {pkg.price != null && <Typography variant="body2" sx={{ mt: 0.5 }}>{currency.format(packagePrice)}</Typography>}
                       </Box>
                     </Box>
-                    <Box sx={{ mt: 1 }}>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
-                        <Typography variant="body2" color="text.secondary">Progress</Typography>
-                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {pkg.sessions_completed}/{pkg.total_sessions} sessions
-                        </Typography>
+
+                    <Box sx={{ mt: 1, display: 'grid', gap: 1.25, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
+                      <Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                          <Typography variant="body2" color="text.secondary">Progress</Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            {pkg.sessions_completed}/{pkg.total_sessions} sessions
+                          </Typography>
+                        </Box>
+                        <LinearProgress variant="determinate" value={progress} sx={{ height: 8, borderRadius: 4 }} />
                       </Box>
-                      <LinearProgress variant="determinate" value={progress} sx={{ height: 8, borderRadius: 4 }} />
+
+                      <Box>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                          <Typography variant="body2" color="text.secondary">Payment</Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            {hasPrice
+                              ? `${currency.format(safeAmountReceived)} / ${currency.format(packagePrice)} (${paymentProgress.toFixed(0)}%)`
+                              : `${currency.format(amountReceived)} received`}
+                          </Typography>
+                        </Box>
+                        <LinearProgress
+                          variant="determinate"
+                          value={paymentProgress}
+                          color="success"
+                          sx={{ height: 8, borderRadius: 4 }}
+                        />
+                      </Box>
                     </Box>
                   </CardContent>
                 </CardActionArea>

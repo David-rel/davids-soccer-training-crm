@@ -9,7 +9,6 @@ import Typography from '@mui/material/Typography';
 import Chip from '@mui/material/Chip';
 import Button from '@mui/material/Button';
 import LinearProgress from '@mui/material/LinearProgress';
-import Slider from '@mui/material/Slider';
 import TextField from '@mui/material/TextField';
 import Divider from '@mui/material/Divider';
 
@@ -20,6 +19,11 @@ const packageTypeLabels: Record<string, string> = {
   '6_week_2x': '6 Weeks - 2x/week',
 };
 
+const currency = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+});
+
 interface PackageDetail {
   id: number;
   parent_id: number;
@@ -28,8 +32,8 @@ interface PackageDetail {
   package_type: string;
   total_sessions: number;
   sessions_completed: number;
-  price: number | null;
-  amount_received: number | null;
+  price: number | string | null;
+  amount_received: number | string | null;
   start_date: string | null;
   is_active: boolean;
   sessions: Array<{
@@ -57,7 +61,6 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const [pkg, setPkg] = useState<PackageDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [draftAmountReceived, setDraftAmountReceived] = useState(0);
   const [savingAmount, setSavingAmount] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentDate, setPaymentDate] = useState(
@@ -69,7 +72,6 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
     if (res.ok) {
       const data: PackageDetail = await res.json();
       setPkg(data);
-      setDraftAmountReceived(Number(data.amount_received ?? 0));
     }
     setLoading(false);
   }, [id]);
@@ -107,25 +109,15 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
     setSavingAmount(false);
   };
 
-  const saveAmountReceived = async (value: number) => {
-    if (!pkg) return;
-    const priceCap = Number(pkg.price ?? 0);
-    const current = Number(pkg.amount_received ?? 0);
-    const clamped = Math.min(Math.max(current, value), priceCap);
-    if (Math.abs(clamped - current) < 0.01) return;
-    const delta = Number((clamped - current).toFixed(2));
-    await addPayment(delta, paymentDate, 'slider_top_up');
-    setDraftAmountReceived(clamped);
-  };
-
   if (loading) return <Typography>Loading...</Typography>;
   if (!pkg) return <Typography>Package not found.</Typography>;
 
   const progress = pkg.total_sessions > 0 ? (pkg.sessions_completed / pkg.total_sessions) * 100 : 0;
   const packagePrice = Number(pkg.price ?? 0);
   const currentReceived = Number(pkg.amount_received ?? 0);
-  const sliderValue = Math.min(Math.max(currentReceived, draftAmountReceived), packagePrice);
-  const percentReceived = packagePrice > 0 ? (sliderValue / packagePrice) * 100 : 0;
+  const hasPrice = packagePrice > 0;
+  const percentReceived = hasPrice ? Math.min((currentReceived / packagePrice) * 100, 100) : 0;
+  const displayReceived = hasPrice ? Math.min(currentReceived, packagePrice) : currentReceived;
 
   return (
     <Box>
@@ -154,22 +146,46 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
       {/* Progress */}
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-            <Typography variant="h6" sx={{ fontWeight: 600 }}>Progress</Typography>
-            <Typography sx={{ fontWeight: 700 }}>
-              {pkg.sessions_completed} / {pkg.total_sessions} sessions
-            </Typography>
+          <Typography variant="h6" sx={{ fontWeight: 600, mb: 1.25 }}>Progress</Typography>
+          <Box sx={{ display: 'grid', gap: 1.25 }}>
+            <Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                <Typography variant="body2" color="text.secondary">Sessions</Typography>
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  {pkg.sessions_completed} / {pkg.total_sessions}
+                </Typography>
+              </Box>
+              <LinearProgress variant="determinate" value={progress} sx={{ height: 12, borderRadius: 6 }} />
+            </Box>
+
+            <Box>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                <Typography variant="body2" color="text.secondary">Payment</Typography>
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  {hasPrice
+                    ? `${currency.format(displayReceived)} / ${currency.format(packagePrice)} (${percentReceived.toFixed(0)}%)`
+                    : `${currency.format(displayReceived)} received`}
+                </Typography>
+              </Box>
+              <LinearProgress
+                variant="determinate"
+                value={percentReceived}
+                color="success"
+                sx={{ height: 12, borderRadius: 6 }}
+              />
+            </Box>
           </Box>
-          <LinearProgress variant="determinate" value={progress} sx={{ height: 12, borderRadius: 6 }} />
-          {pkg.price && (
+          {hasPrice && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              Package price: ${pkg.price}
+              Package price: {currency.format(packagePrice)}
             </Typography>
           )}
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            Received so far: ${sliderValue.toFixed(2)} / ${packagePrice.toFixed(2)}
-            {packagePrice > 0 ? ` (${percentReceived.toFixed(0)}%)` : ''}
-          </Typography>
+          {!hasPrice && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Set package price to enable payment percent tracking.
+            </Typography>
+          )}
+
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '180px 1fr auto' }, gap: 1, mt: 1.5, alignItems: 'center' }}>
             <TextField
               size="small"
@@ -190,7 +206,7 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
             />
             <Button
               variant="contained"
-              disabled={savingAmount || !paymentAmount || packagePrice <= 0}
+              disabled={savingAmount || !paymentAmount || !hasPrice}
               onClick={async () => {
                 const amount = Number(paymentAmount);
                 if (!Number.isFinite(amount) || amount <= 0) return;
@@ -204,19 +220,8 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
               Add Payment
             </Button>
           </Box>
-          <Slider
-            value={sliderValue}
-            min={currentReceived}
-            max={packagePrice > 0 ? packagePrice : 0}
-            step={1}
-            disabled={packagePrice <= 0 || savingAmount}
-            valueLabelDisplay="auto"
-            valueLabelFormat={(value) => `$${Number(value).toFixed(0)}`}
-            onChange={(_, value) => setDraftAmountReceived(value as number)}
-            onChangeCommitted={(_, value) => saveAmountReceived(value as number)}
-            sx={{ mt: 1 }}
-          />
-          {packagePrice <= 0 && (
+
+          {!hasPrice && (
             <Typography variant="caption" color="text.secondary">
               Add package price to track money received.
             </Typography>
