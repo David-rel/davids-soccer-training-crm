@@ -18,20 +18,16 @@ import DialogActions from '@mui/material/DialogActions';
 import Stepper from '@mui/material/Stepper';
 import Step from '@mui/material/Step';
 import StepLabel from '@mui/material/StepLabel';
-import Divider from '@mui/material/Divider';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
-import PhoneIcon from '@mui/icons-material/Phone';
-import EmailIcon from '@mui/icons-material/Email';
-import InstagramIcon from '@mui/icons-material/Instagram';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Switch from '@mui/material/Switch';
 import EventIcon from '@mui/icons-material/Event';
 import CheckIcon from '@mui/icons-material/Check';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import { formatArizonaDate, formatArizonaDateTime, toDateInput } from '@/lib/timezone';
-import type { DMStatus, CallOutcome, Gender, ParentDetail, Player, Reminder } from '@/lib/types';
+import type { Gender, ParentDetail, Player } from '@/lib/types';
 
 const dmSteps = [
   { value: 'first_message', label: 'First Message' },
@@ -57,12 +53,15 @@ const reminderTypeLabels: Record<string, string> = {
   follow_up_14d: 'Day 14',
 };
 
+type EditableParentField = 'name' | 'secondary_parent_name' | 'phone' | 'email' | 'instagram_link' | 'notes';
+
 export default function ContactDetail({ id }: { id: string }) {
   const router = useRouter();
   const [parent, setParent] = useState<ParentDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
+  const [savingField, setSavingField] = useState<string | null>(null);
   const [playerDialogOpen, setPlayerDialogOpen] = useState(false);
   const [editingPlayer, setEditingPlayer] = useState<Player | null>(null);
   const [newPlayer, setNewPlayer] = useState({ name: '', age: '', team: '', gender: '' as Gender | '', notes: '' });
@@ -104,6 +103,26 @@ export default function ContactDetail({ id }: { id: string }) {
     }
     fetchParent();
     setEditingField(null);
+  };
+
+  const startInlineEdit = (field: EditableParentField, currentValue: string | null) => {
+    setEditingField(field);
+    setEditValue(currentValue ?? '');
+  };
+
+  const cancelInlineEdit = () => {
+    setEditingField(null);
+    setEditValue('');
+  };
+
+  const saveInlineEdit = async (field: EditableParentField, required = false) => {
+    const trimmed = editValue.trim();
+    if (required && !trimmed) return;
+
+    const normalizedValue = required ? trimmed : (trimmed || null);
+    setSavingField(field);
+    await updateField(field, normalizedValue);
+    setSavingField(null);
   };
 
   const openAddPlayerDialog = () => {
@@ -205,6 +224,21 @@ export default function ContactDetail({ id }: { id: string }) {
 
   const dmStepIndex = parent.dm_status ? dmSteps.findIndex((s) => s.value === parent.dm_status) : -1;
   const isWentCold = parent.dm_status === 'went_cold';
+  const editableFields: Array<{
+    field: EditableParentField;
+    label: string;
+    value: string | null;
+    required?: boolean;
+    type?: 'text' | 'email';
+    multiline?: boolean;
+  }> = [
+    { field: 'name', label: 'Primary Parent Name', value: parent.name, required: true },
+    { field: 'secondary_parent_name', label: 'Secondary Parent Name', value: parent.secondary_parent_name },
+    { field: 'phone', label: 'Phone', value: parent.phone },
+    { field: 'email', label: 'Email', value: parent.email, type: 'email' },
+    { field: 'instagram_link', label: 'Instagram Link', value: parent.instagram_link },
+    { field: 'notes', label: 'Notes', value: parent.notes, multiline: true },
+  ];
 
   return (
     <Box>
@@ -229,28 +263,61 @@ export default function ContactDetail({ id }: { id: string }) {
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>Contact Info</Typography>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
-            {parent.phone && (
-              <Chip icon={<PhoneIcon />} label={parent.phone} variant="outlined" />
-            )}
-            {parent.email && (
-              <Chip icon={<EmailIcon />} label={parent.email} variant="outlined" />
-            )}
-            {parent.instagram_link && (
-              <Chip
-                icon={<InstagramIcon />}
-                label="Instagram DM"
-                variant="outlined"
-                component="a"
-                href={parent.instagram_link}
-                target="_blank"
-                clickable
-              />
-            )}
+          <Box sx={{ display: 'grid', gap: 1.5 }}>
+            {editableFields.map((config) => {
+              const isEditing = editingField === config.field;
+              const displayValue = config.value && config.value.trim().length > 0 ? config.value : 'Not set';
+              const isSaving = savingField === config.field;
+
+              return (
+                <Box key={config.field} sx={{ p: 1.5, bgcolor: 'grey.50', borderRadius: 2 }}>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.75 }}>
+                    {config.label}
+                  </Typography>
+
+                  {isEditing ? (
+                    <>
+                      <TextField
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        type={config.type || 'text'}
+                        size="small"
+                        fullWidth
+                        autoFocus
+                        multiline={config.multiline}
+                        minRows={config.multiline ? 3 : undefined}
+                      />
+                      <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={() => saveInlineEdit(config.field, config.required)}
+                          disabled={isSaving || (config.required && !editValue.trim())}
+                        >
+                          {isSaving ? 'Saving...' : 'Save'}
+                        </Button>
+                        <Button size="small" onClick={cancelInlineEdit} disabled={isSaving}>
+                          Cancel
+                        </Button>
+                      </Box>
+                    </>
+                  ) : (
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: config.multiline ? 'flex-start' : 'center', gap: 1 }}>
+                      <Typography
+                        color={displayValue === 'Not set' ? 'text.secondary' : 'text.primary'}
+                        sx={{ whiteSpace: config.multiline ? 'pre-wrap' : 'normal' }}
+                      >
+                        {displayValue}
+                      </Typography>
+                      <IconButton size="small" onClick={() => startInlineEdit(config.field, config.value)} title={`Edit ${config.label}`}>
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  )}
+                </Box>
+              );
+            })}
           </Box>
-          {parent.notes && (
-            <Typography sx={{ mt: 2 }} color="text.secondary">{parent.notes}</Typography>
-          )}
         </CardContent>
       </Card>
 
