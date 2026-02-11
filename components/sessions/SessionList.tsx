@@ -20,7 +20,8 @@ import EventRepeatIcon from '@mui/icons-material/EventRepeat';
 import EventBusyIcon from '@mui/icons-material/EventBusy';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import EditIcon from '@mui/icons-material/Edit';
-import { formatArizonaDateTime, toDatetimeLocal, toArizonaTime } from '@/lib/timezone';
+import CheckIcon from '@mui/icons-material/Check';
+import { formatArizonaDateTime, toDatetimeLocal } from '@/lib/timezone';
 
 interface SessionRow {
   id: number;
@@ -214,6 +215,14 @@ export default function SessionList() {
   }
 
   const renderSession = (session: typeof allSessions[0]) => {
+    const canComplete =
+      !session.cancelled &&
+      session.status !== 'cancelled' &&
+      session.status !== 'no_show' &&
+      session.status !== 'completed' &&
+      session.showed_up === null &&
+      new Date(session.session_date) <= new Date();
+
     // Determine background color based on status
     const getBackgroundColor = () => {
       if (session.status === 'accepted') return 'success.50';
@@ -269,6 +278,16 @@ export default function SessionList() {
                     onClick={() => openEditDialog(session, session.sessionType)}
                   >
                     Edit
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="success"
+                    startIcon={<CheckIcon />}
+                    onClick={() => openComplete(session, session.sessionType)}
+                    disabled={!canComplete}
+                  >
+                    Complete
                   </Button>
                   <Button 
                     size="small" 

@@ -34,7 +34,37 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const playersResult = await query('SELECT * FROM crm_players WHERE parent_id = $1 ORDER BY created_at', [id]);
     const firstSessionResult = await query('SELECT * FROM crm_first_sessions WHERE parent_id = $1 ORDER BY session_date DESC', [id]);
     const sessionsResult = await query('SELECT * FROM crm_sessions WHERE parent_id = $1 ORDER BY session_date DESC', [id]);
-    const packagesResult = await query('SELECT * FROM crm_packages WHERE parent_id = $1 AND is_active = true LIMIT 1', [id]);
+    const packagesResult = await query(
+      `SELECT
+         pkg.id,
+         pkg.parent_id,
+         pkg.package_type,
+         pkg.total_sessions,
+         COALESCE((
+           SELECT COUNT(*)
+           FROM crm_sessions s
+           WHERE s.package_id = pkg.id
+             AND COALESCE(s.cancelled, false) = false
+             AND COALESCE(s.status, '') NOT IN ('cancelled', 'no_show')
+             AND (
+               s.showed_up = true
+               OR s.status = 'completed'
+               OR (s.status = 'accepted' AND s.session_date <= NOW())
+             )
+         ), 0) as sessions_completed,
+         pkg.price,
+         pkg.amount_received,
+         pkg.start_date,
+         pkg.is_active,
+         pkg.created_at,
+         pkg.updated_at
+       FROM crm_packages pkg
+       WHERE pkg.parent_id = $1
+         AND pkg.is_active = true
+       ORDER BY pkg.created_at DESC
+       LIMIT 1`,
+      [id]
+    );
     const remindersResult = await query(
       'SELECT * FROM crm_reminders WHERE parent_id = $1 AND sent = false ORDER BY due_at',
       [id]

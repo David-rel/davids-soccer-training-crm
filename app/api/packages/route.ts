@@ -7,7 +7,30 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const result = await query(`
-      SELECT pkg.*, p.name as parent_name,
+      SELECT
+        pkg.id,
+        pkg.parent_id,
+        pkg.package_type,
+        pkg.total_sessions,
+        COALESCE((
+          SELECT COUNT(*)
+          FROM crm_sessions s
+          WHERE s.package_id = pkg.id
+            AND COALESCE(s.cancelled, false) = false
+            AND COALESCE(s.status, '') NOT IN ('cancelled', 'no_show')
+            AND (
+              s.showed_up = true
+              OR s.status = 'completed'
+              OR (s.status = 'accepted' AND s.session_date <= NOW())
+            )
+        ), 0) as sessions_completed,
+        pkg.price,
+        pkg.amount_received,
+        pkg.start_date,
+        pkg.is_active,
+        pkg.created_at,
+        pkg.updated_at,
+        p.name as parent_name,
         (SELECT ARRAY_AGG(name ORDER BY created_at) FROM crm_players WHERE parent_id = p.id) as player_names
       FROM crm_packages pkg
       JOIN crm_parents p ON p.id = pkg.parent_id

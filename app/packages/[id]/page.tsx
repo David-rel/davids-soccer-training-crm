@@ -39,6 +39,7 @@ interface PackageDetail {
   sessions: Array<{
     id: number;
     session_date: string;
+    status?: string | null;
     player_names: string[] | null;
     showed_up: boolean | null;
     cancelled: boolean;
@@ -281,10 +282,35 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
                   )}
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1 }}>
-                  {s.showed_up === true && <Chip label="Showed" color="success" size="small" />}
-                  {s.cancelled && <Chip label="Cancelled" color="error" size="small" />}
+                  {(() => {
+                    const status = s.status?.toLowerCase();
+                    const sessionTime = new Date(s.session_date).getTime();
+                    const isUpcoming = Number.isFinite(sessionTime) ? sessionTime > Date.now() : false;
+
+                    if (status && status !== 'scheduled') {
+                      return (
+                        <Chip
+                          label={status.replace('_', ' ')}
+                          color={
+                            status === 'accepted' || status === 'completed'
+                              ? 'success'
+                              : status === 'cancelled' || status === 'no_show'
+                                ? 'error'
+                                : status === 'rescheduled'
+                                  ? 'warning'
+                                  : 'info'
+                          }
+                          size="small"
+                        />
+                      );
+                    }
+
+                    if (s.showed_up === true) return <Chip label="Showed Up" color="success" size="small" />;
+                    if (s.cancelled) return <Chip label="Cancelled" color="error" size="small" />;
+                    if (isUpcoming) return <Chip label="Upcoming" color="info" size="small" />;
+                    return <Chip label="Pending Completion" color="warning" size="small" />;
+                  })()}
                   {s.was_paid && <Chip label={`Paid (${s.payment_method})`} size="small" variant="outlined" />}
-                  {s.showed_up === null && !s.cancelled && <Chip label="Upcoming" color="info" size="small" />}
                 </Box>
               </Box>
             ))
