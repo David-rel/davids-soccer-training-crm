@@ -34,7 +34,19 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const values: unknown[] = [];
     let paramIndex = 1;
 
-    const allowedFields = ['session_date', 'location', 'price', 'deposit_paid', 'deposit_amount', 'notes', 'status'];
+    const allowedFields = [
+      'session_date',
+      'location',
+      'price',
+      'deposit_paid',
+      'deposit_amount',
+      'notes',
+      'status',
+      'cancelled',
+      'showed_up',
+      'was_paid',
+      'payment_method',
+    ];
     for (const field of allowedFields) {
       if (field in body) {
         fields.push(`${field} = $${paramIndex}`);

@@ -21,6 +21,7 @@ import EventBusyIcon from '@mui/icons-material/EventBusy';
 import EventAvailableIcon from '@mui/icons-material/EventAvailable';
 import EditIcon from '@mui/icons-material/Edit';
 import CheckIcon from '@mui/icons-material/Check';
+import UndoIcon from '@mui/icons-material/Undo';
 import { formatArizonaDateTime, toDatetimeLocal } from '@/lib/timezone';
 
 interface SessionRow {
@@ -46,7 +47,21 @@ interface Player {
   name: string;
 }
 
+type SessionType = 'first' | 'regular';
+type StatusAction = 'accept' | 'cancel' | 'reschedule' | 'no-show';
+
+interface UndoState {
+  previous: {
+    status: string;
+    cancelled: boolean;
+    showed_up: boolean | null;
+    was_paid: boolean;
+    payment_method: string | null;
+  };
+}
+
 export default function SessionList() {
+  const UNDO_STORAGE_KEY = 'sessions-undo-state-v1';
   const [firstSessions, setFirstSessions] = useState<SessionRow[]>([]);
   const [regularSessions, setRegularSessions] = useState<SessionRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,6 +79,8 @@ export default function SessionList() {
     player_ids: [] as number[],
   });
   const [availablePlayers, setAvailablePlayers] = useState<Player[]>([]);
+  const [undoStateBySession, setUndoStateBySession] = useState<Record<string, UndoState>>({});
+  const [undoInProgressKey, setUndoInProgressKey] = useState<string | null>(null);
 
   const fetchSessions = async () => {
     setLoading(true);
@@ -77,6 +94,26 @@ export default function SessionList() {
   };
 
   useEffect(() => { fetchSessions(); }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const savedUndoState = localStorage.getItem(UNDO_STORAGE_KEY);
+      if (!savedUndoState) return;
+
+      const parsedUndoState = JSON.parse(savedUndoState) as Record<string, UndoState>;
+      if (parsedUndoState && typeof parsedUndoState === 'object') {
+        setUndoStateBySession(parsedUndoState);
+      }
+    } catch (error) {
+      console.error('Failed to load undo state:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(UNDO_STORAGE_KEY, JSON.stringify(undoStateBySession));
+  }, [undoStateBySession]);
 
   const handleComplete = async () => {
     if (!completeDialog) return;
@@ -108,29 +145,109 @@ export default function SessionList() {
     setCompleteDialog({ session, type });
   };
 
-  const updateSessionStatus = async (sessionId: number, type: 'first' | 'regular', action: 'accept' | 'cancel' | 'reschedule' | 'no-show') => {
+  const updateSessionInState = (sessionId: number, type: SessionType, updates: Partial<SessionRow>) => {
+    if (type === 'first') {
+      setFirstSessions((prev) =>
+        prev.map((session) => (session.id === sessionId ? { ...session, ...updates } : session))
+      );
+      return;
+    }
+
+    setRegularSessions((prev) =>
+      prev.map((session) => (session.id === sessionId ? { ...session, ...updates } : session))
+    );
+  };
+
+  const getUndoKey = (sessionId: number, type: SessionType) => `${type}-${sessionId}`;
+
+  const updateSessionStatus = async (sessionId: number, type: SessionType, action: StatusAction) => {
+    const sessions = type === 'first' ? firstSessions : regularSessions;
+    const currentSession = sessions.find((session) => session.id === sessionId);
+    if (!currentSession) return;
+
     const endpoint = type === 'first'
       ? `/api/first-sessions/${sessionId}/${action}`
       : `/api/sessions/${sessionId}/${action}`;
-    
-    await fetch(endpoint, { method: 'POST' });
-    
-    // Update locally without refetching to prevent scroll jump
-    const statusMap = {
-      accept: 'accepted',
-      cancel: 'cancelled',
-      reschedule: 'rescheduled',
-      'no-show': 'no_show'
+
+    const response = await fetch(endpoint, { method: 'POST' });
+    if (!response.ok) {
+      console.error('Failed to update session status');
+      return;
+    }
+
+    const updatedSession = await response.json();
+    updateSessionInState(sessionId, type, {
+      status: updatedSession.status,
+      cancelled: updatedSession.cancelled,
+      showed_up: updatedSession.showed_up,
+      was_paid: updatedSession.was_paid,
+      payment_method: updatedSession.payment_method,
+    });
+
+    const undoKey = getUndoKey(sessionId, type);
+    setUndoStateBySession((prev) => ({
+      ...prev,
+      [undoKey]: {
+        previous: {
+          status: currentSession.status || 'scheduled',
+          cancelled: currentSession.cancelled,
+          showed_up: currentSession.showed_up,
+          was_paid: currentSession.was_paid,
+          payment_method: currentSession.payment_method,
+        },
+      },
+    }));
+  };
+
+  const handleUndoStatus = async (session: SessionRow & { sessionType: SessionType }) => {
+    const { id: sessionId, sessionType: type } = session;
+    const undoKey = getUndoKey(sessionId, type);
+    const undoState = undoStateBySession[undoKey];
+    if (undoInProgressKey === undoKey) return;
+
+    const endpoint = type === 'first'
+      ? `/api/first-sessions/${sessionId}`
+      : `/api/sessions/${sessionId}`;
+
+    const fallbackUndoPayload = {
+      status: 'scheduled',
+      cancelled: false,
+      showed_up: null as boolean | null,
+      was_paid: session.was_paid,
+      payment_method: session.payment_method,
     };
-    
-    if (type === 'first') {
-      setFirstSessions(prev => prev.map(s => 
-        s.id === sessionId ? { ...s, status: statusMap[action] } : s
-      ));
-    } else {
-      setRegularSessions(prev => prev.map(s => 
-        s.id === sessionId ? { ...s, status: statusMap[action] } : s
-      ));
+    const undoPayload = undoState?.previous || fallbackUndoPayload;
+
+    setUndoInProgressKey(undoKey);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(undoPayload),
+      });
+
+      if (!response.ok) {
+        console.error('Failed to undo session status change');
+        return;
+      }
+
+      const restoredSession = await response.json();
+      updateSessionInState(sessionId, type, {
+        status: restoredSession.status,
+        cancelled: restoredSession.cancelled,
+        showed_up: restoredSession.showed_up,
+        was_paid: restoredSession.was_paid,
+        payment_method: restoredSession.payment_method,
+      });
+      setUndoStateBySession((prev) => {
+        const next = { ...prev };
+        delete next[undoKey];
+        return next;
+      });
+    } catch (error) {
+      console.error('Failed to undo session status change:', error);
+    } finally {
+      setUndoInProgressKey(null);
     }
   };
 
@@ -215,6 +332,9 @@ export default function SessionList() {
   }
 
   const renderSession = (session: typeof allSessions[0]) => {
+    const undoKey = getUndoKey(session.id, session.sessionType);
+    const rowUndoInProgress = undoInProgressKey === undoKey;
+
     const canComplete =
       !session.cancelled &&
       session.status !== 'cancelled' &&
@@ -324,6 +444,16 @@ export default function SessionList() {
                     onClick={() => updateSessionStatus(session.id, session.sessionType, 'no-show')}
                   >
                     No Show
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    color="info"
+                    startIcon={<UndoIcon />}
+                    onClick={() => handleUndoStatus(session)}
+                    disabled={rowUndoInProgress}
+                  >
+                    {rowUndoInProgress ? 'Undoing...' : 'Undo'}
                   </Button>
                 </Box>
               </CardContent>
@@ -446,6 +576,7 @@ export default function SessionList() {
           <Button onClick={handleEdit} variant="contained">Save</Button>
         </DialogActions>
       </Dialog>
+
     </Box>
   );
 }
