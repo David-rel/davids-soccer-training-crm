@@ -36,6 +36,11 @@ interface SessionListRow {
   is_active: boolean;
 }
 
+interface RevenueByYearRow {
+  year_key: string;
+  total: string | number;
+}
+
 function asNumber(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -199,6 +204,7 @@ export async function GET() {
       pastWeeksResult,
       monthTotalResult,
       overallTotalResult,
+      yearTotalsResult,
       pastSessionsResult,
       upcomingSessionsResult,
     ] = await Promise.all([
@@ -329,6 +335,17 @@ export async function GET() {
       ),
       query(
         `
+          SELECT
+            TO_CHAR(((paid_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')::date, 'YYYY') AS year_key,
+            COALESCE(SUM(amount), 0) AS total
+          FROM (${PAYMENTS_UNION_ALL}) AS payments
+          GROUP BY year_key
+          ORDER BY year_key ASC
+        `,
+        [nowIso]
+      ),
+      query(
+        `
           WITH all_sessions AS (${ALL_SESSIONS_WITH_DETAILS})
           SELECT *
           FROM all_sessions
@@ -417,6 +434,13 @@ export async function GET() {
     const weekProjectedIfNoCancel = round2(weekTotal + weekPotentialSessionsTotal);
     const monthTotal = round2(asNumber(monthTotalResult.rows[0]?.total));
     const overallTotal = round2(asNumber(overallTotalResult.rows[0]?.total));
+    const revenueByYear = (yearTotalsResult.rows as RevenueByYearRow[]).map((row) => ({
+      year: Number(row.year_key),
+      total: round2(asNumber(row.total)),
+    }));
+    const currentYear = Number(
+      formatInTimeZone(new Date(), ARIZONA_TIMEZONE, 'yyyy')
+    );
 
     const weekPct = WEEKLY_GOAL > 0 ? (weekTotal / WEEKLY_GOAL) * 100 : 0;
     const weekProjectedPct =
@@ -503,6 +527,10 @@ export async function GET() {
       },
       overall: {
         total: overallTotal,
+      },
+      years: {
+        current: currentYear,
+        totals: revenueByYear,
       },
       sessions: {
         happened: {

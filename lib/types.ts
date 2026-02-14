@@ -112,6 +112,22 @@ export interface Reminder {
   created_at: string;
 }
 
+export interface Expense {
+  id: number;
+  expense_date: string;
+  vendor: string;
+  category: string;
+  description: string | null;
+  amount: number;
+  payment_method: string | null;
+  receipt_url: string | null;
+  receipt_blob_path: string | null;
+  business_percentage: number;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 // --- Joined/Extended Types for API responses ---
 
 export interface ParentWithPlayers extends Parent {
