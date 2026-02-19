@@ -187,6 +187,17 @@ export default function ContactDetail({ id }: { id: string }) {
     router.push('/contacts');
   };
 
+  const toggleDeadStatus = async () => {
+    if (parent?.is_dead) {
+      await updateField('is_dead', false);
+      return;
+    }
+
+    const confirmed = confirm('Mark this contact/customer as dead? They will be hidden from active lists and reminders.');
+    if (!confirmed) return;
+    await updateField('is_dead', true);
+  };
+
   const bookFirstSession = async () => {
     if (!firstSessionForm.session_date || !firstSessionForm.location) return;
     setBookingFirstSession(true);
@@ -254,9 +265,20 @@ export default function ContactDetail({ id }: { id: string }) {
             </Typography>
           )}
         </Box>
-        <Button color="error" startIcon={<DeleteIcon />} onClick={deleteContact} size="small">
-          Delete
-        </Button>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {parent.is_dead && <Chip label="Dead" color="error" size="small" />}
+          <Button
+            color={parent.is_dead ? 'success' : 'warning'}
+            variant="outlined"
+            onClick={toggleDeadStatus}
+            size="small"
+          >
+            {parent.is_dead ? 'Reactivate' : 'Mark Dead'}
+          </Button>
+          <Button color="error" startIcon={<DeleteIcon />} onClick={deleteContact} size="small">
+            Delete
+          </Button>
+        </Box>
       </Box>
 
       {/* Contact Info */}

@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useCallback, use } from 'react';
-import { useRouter } from 'next/navigation';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
@@ -11,6 +10,13 @@ import Button from '@mui/material/Button';
 import LinearProgress from '@mui/material/LinearProgress';
 import TextField from '@mui/material/TextField';
 import Divider from '@mui/material/Divider';
+import MenuItem from '@mui/material/MenuItem';
+import Alert from '@mui/material/Alert';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import { formatArizonaDateTime, toDatetimeLocal } from '@/lib/timezone';
 
 const packageTypeLabels: Record<string, string> = {
   '12_week_1x': '12 Weeks - 1x/week',
@@ -23,6 +29,46 @@ const currency = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
 });
+
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+
+function getSessionsPerWeek(packageType: string): 1 | 2 {
+  return packageType.endsWith('_2x') ? 2 : 1;
+}
+
+function parseScheduleSeed(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+
+  const utcDate = new Date(Date.UTC(year, month - 1, day, hour, minute, 0, 0));
+  if (
+    utcDate.getUTCFullYear() !== year ||
+    utcDate.getUTCMonth() !== month - 1 ||
+    utcDate.getUTCDate() !== day ||
+    utcDate.getUTCHours() !== hour ||
+    utcDate.getUTCMinutes() !== minute
+  ) {
+    return null;
+  }
+
+  return utcDate;
+}
+
+function formatScheduleSeed(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const year = date.getUTCFullYear();
+  const month = pad(date.getUTCMonth() + 1);
+  const day = pad(date.getUTCDate());
+  const hour = pad(date.getUTCHours());
+  const minute = pad(date.getUTCMinutes());
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
 
 interface PackageDetail {
   id: number;
@@ -38,9 +84,13 @@ interface PackageDetail {
   is_active: boolean;
   sessions: Array<{
     id: number;
+    parent_id: number;
     session_date: string;
     status?: string | null;
     player_names: string[] | null;
+    player_ids: number[] | null;
+    location: string | null;
+    notes: string | null;
     showed_up: boolean | null;
     cancelled: boolean;
     was_paid: boolean;
@@ -55,18 +105,59 @@ interface PackageDetail {
   }>;
 }
 
+interface PlayerOption {
+  id: number;
+  name: string;
+}
+
+interface ScheduleFormState {
+  sessionDate: string;
+  autoSlots: string[];
+  location: string;
+  notes: string;
+  playerIds: number[];
+}
+
+interface EditFormState {
+  sessionDate: string;
+  location: string;
+  notes: string;
+  playerIds: number[];
+}
+
 export const dynamic = 'force-dynamic';
 
 export default function PackageDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const router = useRouter();
   const [pkg, setPkg] = useState<PackageDetail | null>(null);
+  const [players, setPlayers] = useState<PlayerOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingAmount, setSavingAmount] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentDate, setPaymentDate] = useState(
     new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Phoenix' }).format(new Date())
   );
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
+  const [scheduleMode, setScheduleMode] = useState<'single' | 'auto'>('single');
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>({
+    sessionDate: '',
+    autoSlots: [''],
+    location: '',
+    notes: '',
+    playerIds: [],
+  });
+  const [editingSession, setEditingSession] = useState<PackageDetail['sessions'][number] | null>(null);
+  const [editForm, setEditForm] = useState<EditFormState>({
+    sessionDate: '',
+    location: '',
+    notes: '',
+    playerIds: [],
+  });
+  const [editSaving, setEditSaving] = useState(false);
+  const [deleteSession, setDeleteSession] = useState<PackageDetail['sessions'][number] | null>(null);
+  const [deleteSaving, setDeleteSaving] = useState(false);
 
   const fetchPackage = useCallback(async () => {
     const res = await fetch(`/api/packages/${id}`);
@@ -78,6 +169,25 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   }, [id]);
 
   useEffect(() => { fetchPackage(); }, [fetchPackage]);
+
+  useEffect(() => {
+    if (!pkg) return;
+
+    let cancelled = false;
+    fetch(`/api/parents/${pkg.parent_id}/players`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: PlayerOption[]) => {
+        if (cancelled) return;
+        setPlayers(Array.isArray(data) ? data : []);
+      })
+      .catch(() => {
+        if (!cancelled) setPlayers([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [pkg]);
 
   const toggleActive = async () => {
     if (!pkg) return;
@@ -110,6 +220,200 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
     setSavingAmount(false);
   };
 
+  const updatePlayerIds = (rawValue: unknown) => {
+    const values = Array.isArray(rawValue)
+      ? rawValue
+      : typeof rawValue === 'string'
+        ? rawValue.split(',')
+        : rawValue == null
+          ? []
+          : [rawValue];
+
+    const ids = values
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+    return ids;
+  };
+
+  const createPackageSession = async (sessionDate: string) => {
+    if (!pkg) return false;
+
+    const response = await fetch('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        parent_id: pkg.parent_id,
+        package_id: pkg.id,
+        player_ids: scheduleForm.playerIds,
+        session_date: sessionDate,
+        location: scheduleForm.location.trim() || null,
+        notes: scheduleForm.notes.trim() || null,
+      }),
+    });
+
+    return response.ok;
+  };
+
+  const openScheduleDialog = (mode: 'single' | 'auto', sessionsPerWeek: number) => {
+    const defaultPlayerIds = players.map((player) => player.id);
+    setScheduleMode(mode);
+    setScheduleError(null);
+    setScheduleForm({
+      sessionDate: '',
+      autoSlots: Array.from({ length: sessionsPerWeek }, () => ''),
+      location: '',
+      notes: '',
+      playerIds: defaultPlayerIds,
+    });
+    setScheduleDialogOpen(true);
+  };
+
+  const handleScheduleSave = async (remainingSessions: number) => {
+    if (!pkg) return;
+    if (remainingSessions <= 0) {
+      setScheduleError('All sessions are already booked for this package.');
+      return;
+    }
+
+    setScheduleSaving(true);
+    setScheduleError(null);
+
+    try {
+      if (scheduleMode === 'single') {
+        if (!scheduleForm.sessionDate) {
+          setScheduleError('Pick a session date/time.');
+          return;
+        }
+        const success = await createPackageSession(scheduleForm.sessionDate);
+        if (!success) {
+          setScheduleError('Could not schedule session.');
+          return;
+        }
+      } else {
+        const expectedSlots = getSessionsPerWeek(pkg.package_type);
+        const slotInputs = scheduleForm.autoSlots.filter((value) => value.trim().length > 0);
+        if (slotInputs.length < expectedSlots) {
+          setScheduleError(`Pick ${expectedSlots} weekly slot${expectedSlots === 1 ? '' : 's'}.`);
+          return;
+        }
+        if (new Set(slotInputs).size !== slotInputs.length) {
+          setScheduleError('Weekly slots must be different.');
+          return;
+        }
+
+        const seeds = slotInputs.map((value) => parseScheduleSeed(value));
+        if (seeds.some((seed) => !seed)) {
+          setScheduleError('One or more slot date/times are invalid.');
+          return;
+        }
+
+        const queue = seeds
+          .filter((seed): seed is Date => seed !== null)
+          .map((seed) => ({ next: seed }));
+
+        const activeSessions = pkg.sessions.filter((session) => {
+          const status = session.status?.toLowerCase();
+          return !session.cancelled && status !== 'cancelled' && status !== 'no_show';
+        });
+        const existingDateTimes = new Set(activeSessions.map((session) => toDatetimeLocal(session.session_date)));
+        const newDateTimes: string[] = [];
+        const newDateTimesSet = new Set<string>();
+        let guard = 0;
+
+        while (newDateTimes.length < remainingSessions && guard < 1500) {
+          queue.sort((a, b) => a.next.getTime() - b.next.getTime());
+          const earliest = queue[0];
+          const candidate = formatScheduleSeed(earliest.next);
+
+          if (!existingDateTimes.has(candidate) && !newDateTimesSet.has(candidate)) {
+            newDateTimes.push(candidate);
+            newDateTimesSet.add(candidate);
+          }
+
+          earliest.next = new Date(earliest.next.getTime() + MS_PER_WEEK);
+          guard += 1;
+        }
+
+        if (newDateTimes.length < remainingSessions) {
+          setScheduleError('Could not generate enough future slots. Try later start dates.');
+          return;
+        }
+
+        for (const sessionDate of newDateTimes) {
+          // Keep order deterministic and avoid overloading APIs/reminder inserts.
+          const success = await createPackageSession(sessionDate);
+          if (!success) {
+            setScheduleError('Some sessions could not be scheduled. Please try again.');
+            return;
+          }
+        }
+      }
+
+      setScheduleDialogOpen(false);
+      await fetchPackage();
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
+
+  const openEditDialog = (session: PackageDetail['sessions'][number]) => {
+    setEditingSession(session);
+    setEditForm({
+      sessionDate: toDatetimeLocal(session.session_date),
+      location: session.location || '',
+      notes: session.notes || '',
+      playerIds: session.player_ids || [],
+    });
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingSession) return;
+    if (!editForm.sessionDate) return;
+
+    setEditSaving(true);
+    try {
+      const sessionResponse = await fetch(`/api/sessions/${editingSession.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_date: editForm.sessionDate,
+          location: editForm.location.trim() || null,
+          notes: editForm.notes.trim() || null,
+        }),
+      });
+
+      if (!sessionResponse.ok) return;
+
+      const playersResponse = await fetch(`/api/sessions/${editingSession.id}/players`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player_ids: editForm.playerIds }),
+      });
+
+      if (!playersResponse.ok) return;
+
+      setEditingSession(null);
+      await fetchPackage();
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  const handleDeleteSession = async () => {
+    if (!deleteSession) return;
+    setDeleteSaving(true);
+    try {
+      const response = await fetch(`/api/sessions/${deleteSession.id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) return;
+      setDeleteSession(null);
+      await fetchPackage();
+    } finally {
+      setDeleteSaving(false);
+    }
+  };
+
   if (loading) return <Typography>Loading...</Typography>;
   if (!pkg) return <Typography>Package not found.</Typography>;
 
@@ -119,6 +423,12 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   const hasPrice = packagePrice > 0;
   const percentReceived = hasPrice ? Math.min((currentReceived / packagePrice) * 100, 100) : 0;
   const displayReceived = hasPrice ? Math.min(currentReceived, packagePrice) : currentReceived;
+  const sessionsPerWeek = getSessionsPerWeek(pkg.package_type);
+  const bookedSessions = pkg.sessions.filter((session) => {
+    const status = session.status?.toLowerCase();
+    return !session.cancelled && status !== 'cancelled' && status !== 'no_show';
+  });
+  const remainingSessions = Math.max(pkg.total_sessions - bookedSessions.length, 0);
 
   return (
     <Box>
@@ -262,19 +572,45 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
               Sessions ({pkg.sessions.length})
             </Typography>
-            <Button size="small" variant="contained" onClick={() => router.push(`/sessions/new?parent_id=${pkg.parent_id}&package_id=${pkg.id}`)}>
-              Schedule Session
-            </Button>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <Typography variant="caption" color="text.secondary">
+                Remaining to book: {remainingSessions}
+              </Typography>
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={remainingSessions <= 0}
+                onClick={() => openScheduleDialog('auto', sessionsPerWeek)}
+              >
+                Auto-Schedule Remaining
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                disabled={remainingSessions <= 0}
+                onClick={() => openScheduleDialog('single', sessionsPerWeek)}
+              >
+                Schedule Session
+              </Button>
+            </Box>
           </Box>
           {pkg.sessions.length === 0 ? (
             <Typography color="text.secondary" variant="body2">No sessions booked for this package yet.</Typography>
           ) : (
             pkg.sessions.map((s) => (
-              <Box key={s.id} sx={{ p: 1.5, bgcolor: 'grey.50', borderRadius: 2, mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Box
+                key={s.id}
+                sx={{ p: 1.5, bgcolor: 'grey.50', borderRadius: 2, mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}
+              >
                 <Box>
                   <Typography sx={{ fontWeight: 600 }}>
-                    {new Date(s.session_date).toLocaleDateString()}
+                    {formatArizonaDateTime(s.session_date)}
                   </Typography>
+                  {s.location && (
+                    <Typography variant="body2" color="text.secondary">
+                      {s.location}
+                    </Typography>
+                  )}
                   {s.player_names && s.player_names.length > 0 && (
                     <Typography variant="body2" color="text.secondary">
                       {s.player_names.join(', ')}
@@ -311,12 +647,191 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
                     return <Chip label="Pending Completion" color="warning" size="small" />;
                   })()}
                   {s.was_paid && <Chip label={`Paid (${s.payment_method})`} size="small" variant="outlined" />}
+                  <Button size="small" variant="outlined" onClick={() => openEditDialog(s)}>
+                    Edit
+                  </Button>
+                  <Button size="small" variant="outlined" color="error" onClick={() => setDeleteSession(s)}>
+                    Delete
+                  </Button>
                 </Box>
               </Box>
             ))
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={scheduleDialogOpen} onClose={() => setScheduleDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          {scheduleMode === 'auto' ? 'Auto-Schedule Remaining Sessions' : 'Schedule Session'}
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              {remainingSessions} session{remainingSessions === 1 ? '' : 's'} left to book.
+            </Typography>
+            {scheduleMode === 'auto' && (
+              <Typography variant="body2" color="text.secondary">
+                This package is {sessionsPerWeek}x/week. Pick {sessionsPerWeek} weekly slot{sessionsPerWeek === 1 ? '' : 's'} and it will fill all remaining sessions automatically.
+              </Typography>
+            )}
+
+            {scheduleMode === 'single' ? (
+              <TextField
+                label="Session Date & Time"
+                type="datetime-local"
+                value={scheduleForm.sessionDate}
+                onChange={(event) => setScheduleForm((prev) => ({ ...prev, sessionDate: event.target.value }))}
+                slotProps={{ inputLabel: { shrink: true } }}
+                fullWidth
+                required
+              />
+            ) : (
+              scheduleForm.autoSlots.map((slot, index) => (
+                <TextField
+                  key={`auto-slot-${index}`}
+                  label={`Weekly Slot ${index + 1} (Date & Time)`}
+                  type="datetime-local"
+                  value={slot}
+                  onChange={(event) => {
+                    const nextSlots = [...scheduleForm.autoSlots];
+                    nextSlots[index] = event.target.value;
+                    setScheduleForm((prev) => ({ ...prev, autoSlots: nextSlots }));
+                  }}
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  fullWidth
+                  required
+                />
+              ))
+            )}
+
+            <TextField
+              label="Location"
+              value={scheduleForm.location}
+              onChange={(event) => setScheduleForm((prev) => ({ ...prev, location: event.target.value }))}
+              fullWidth
+            />
+
+            {players.length > 0 && (
+              <TextField
+                label="Players (select multiple)"
+                select
+                fullWidth
+                SelectProps={{ multiple: true, value: scheduleForm.playerIds }}
+                onChange={(event) =>
+                  setScheduleForm((prev) => ({ ...prev, playerIds: updatePlayerIds(event.target.value) }))
+                }
+              >
+                {players.map((player) => (
+                  <MenuItem key={player.id} value={player.id}>
+                    {player.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
+
+            <TextField
+              label="Notes"
+              value={scheduleForm.notes}
+              onChange={(event) => setScheduleForm((prev) => ({ ...prev, notes: event.target.value }))}
+              multiline
+              minRows={2}
+              fullWidth
+            />
+
+            {scheduleError && <Alert severity="error">{scheduleError}</Alert>}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setScheduleDialogOpen(false)} disabled={scheduleSaving}>
+            Cancel
+          </Button>
+          <Button
+            onClick={() => handleScheduleSave(remainingSessions)}
+            variant="contained"
+            disabled={scheduleSaving || remainingSessions <= 0}
+          >
+            {scheduleSaving
+              ? 'Scheduling...'
+              : scheduleMode === 'auto'
+                ? `Schedule ${remainingSessions} Sessions`
+                : 'Schedule Session'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!editingSession} onClose={() => setEditingSession(null)} maxWidth="sm" fullWidth>
+        <DialogTitle>Edit Session</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <TextField
+              label="Session Date & Time"
+              type="datetime-local"
+              value={editForm.sessionDate}
+              onChange={(event) => setEditForm((prev) => ({ ...prev, sessionDate: event.target.value }))}
+              slotProps={{ inputLabel: { shrink: true } }}
+              fullWidth
+              required
+            />
+            <TextField
+              label="Location"
+              value={editForm.location}
+              onChange={(event) => setEditForm((prev) => ({ ...prev, location: event.target.value }))}
+              fullWidth
+            />
+            {players.length > 0 && (
+              <TextField
+                label="Players (select multiple)"
+                select
+                fullWidth
+                SelectProps={{ multiple: true, value: editForm.playerIds }}
+                onChange={(event) =>
+                  setEditForm((prev) => ({ ...prev, playerIds: updatePlayerIds(event.target.value) }))
+                }
+              >
+                {players.map((player) => (
+                  <MenuItem key={player.id} value={player.id}>
+                    {player.name}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
+            <TextField
+              label="Notes"
+              value={editForm.notes}
+              onChange={(event) => setEditForm((prev) => ({ ...prev, notes: event.target.value }))}
+              multiline
+              minRows={2}
+              fullWidth
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditingSession(null)} disabled={editSaving}>
+            Cancel
+          </Button>
+          <Button onClick={handleSaveEdit} variant="contained" disabled={editSaving || !editForm.sessionDate}>
+            {editSaving ? 'Saving...' : 'Save'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!deleteSession} onClose={() => setDeleteSession(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Delete Session?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            This removes the session scheduled for{' '}
+            {deleteSession ? formatArizonaDateTime(deleteSession.session_date) : ''}.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteSession(null)} disabled={deleteSaving}>
+            Cancel
+          </Button>
+          <Button color="error" variant="contained" onClick={handleDeleteSession} disabled={deleteSaving}>
+            {deleteSaving ? 'Deleting...' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

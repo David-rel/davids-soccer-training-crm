@@ -15,6 +15,7 @@ export async function GET() {
       FROM crm_reminders r
       JOIN crm_parents p ON p.id = r.parent_id
       WHERE r.sent = false
+        AND COALESCE(p.is_dead, false) = false
       ORDER BY r.due_at ASC
     `);
     return jsonResponse(result.rows);

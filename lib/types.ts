@@ -28,6 +28,7 @@ export interface Parent {
   phone: string | null;
   instagram_link: string | null;
   secondary_parent_name: string | null;
+  is_dead: boolean;
   dm_status: DMStatus | null;
   phone_call_booked: boolean;
   call_date_time: string | null;
@@ -145,7 +146,7 @@ export interface DashboardData {
   todays_calls: (Parent & { call_date_time: string })[];
   todays_first_sessions: (FirstSession & { parent_name: string; player_name: string | null })[];
   todays_sessions: (Session & { parent_name: string; player_name: string | null })[];
-  pending_reminders: (Reminder & { parent_name: string })[];
+  pending_reminders: (Reminder & { parent_name: string; player_names?: string[] | null })[];
   stats: {
     total_contacts: number;
     sessions_this_week: number;

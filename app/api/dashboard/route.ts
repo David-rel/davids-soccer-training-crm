@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
       ? await query(
           `SELECT * FROM crm_parents
            WHERE phone_call_booked = true
+           AND COALESCE(is_dead, false) = false
            AND (call_outcome IS NULL OR call_outcome NOT IN ('session_booked', 'uninterested'))
            AND (
              (call_date_time >= $1 AND call_date_time <= $2)
@@ -49,6 +50,7 @@ export async function GET(request: NextRequest) {
       : await query(
           `SELECT * FROM crm_parents
            WHERE phone_call_booked = true
+           AND COALESCE(is_dead, false) = false
            AND (call_outcome IS NULL OR call_outcome NOT IN ('session_booked', 'uninterested'))
            AND call_date_time >= $1
            AND call_date_time <= $2
@@ -67,6 +69,7 @@ export async function GET(request: NextRequest) {
        LEFT JOIN crm_players pl ON pl.id = fsp.player_id
        WHERE fs.session_date >= $1 AND fs.session_date <= $2
        AND (fs.status IS NULL OR fs.status NOT IN ('cancelled', 'completed'))
+       AND COALESCE(p.is_dead, false) = false
        GROUP BY fs.id, p.name
        ORDER BY fs.session_date`,
       [selectedStart, selectedEnd]
@@ -83,6 +86,7 @@ export async function GET(request: NextRequest) {
        LEFT JOIN crm_players pl ON pl.id = sp.player_id
        WHERE s.session_date >= $1 AND s.session_date <= $2
        AND (s.status IS NULL OR s.status NOT IN ('cancelled', 'completed'))
+       AND COALESCE(p.is_dead, false) = false
        GROUP BY s.id, p.name
        ORDER BY s.session_date`,
       [selectedStart, selectedEnd]
@@ -104,6 +108,25 @@ export async function GET(request: NextRequest) {
         )::int as due_days_ago,
         p.dm_status as parent_dm_status,
         CASE
+          WHEN r.reminder_category = 'session_reminder' THEN
+            CASE
+              WHEN r.session_id IS NOT NULL THEN (
+                SELECT ARRAY_AGG(pl.name ORDER BY pl.created_at)
+                FROM crm_session_players sp
+                JOIN crm_players pl ON pl.id = sp.player_id
+                WHERE sp.session_id = r.session_id
+              )
+              WHEN r.first_session_id IS NOT NULL THEN (
+                SELECT ARRAY_AGG(pl.name ORDER BY pl.created_at)
+                FROM crm_first_session_players fsp
+                JOIN crm_players pl ON pl.id = fsp.player_id
+                WHERE fsp.first_session_id = r.first_session_id
+              )
+              ELSE NULL
+            END
+          ELSE NULL
+        END as player_names,
+        CASE
           WHEN p.secondary_parent_name IS NOT NULL AND TRIM(COALESCE(p.secondary_parent_name, '')) != ''
           THEN p.name || ' and ' || p.secondary_parent_name
           ELSE p.name
@@ -111,6 +134,7 @@ export async function GET(request: NextRequest) {
       FROM crm_reminders r
       JOIN crm_parents p ON p.id = r.parent_id
       WHERE r.sent = false
+        AND COALESCE(p.is_dead, false) = false
         AND r.due_at <= $2
       ORDER BY due_days_ago DESC, r.due_at ASC
     `,
@@ -124,11 +148,33 @@ export async function GET(request: NextRequest) {
     const statsResult = await query(
       `
       SELECT
-        (SELECT COUNT(*) FROM crm_parents) as total_contacts,
-        (SELECT COUNT(*) FROM crm_first_sessions WHERE session_date >= $1 AND session_date <= $3 AND (status IS NULL OR status NOT IN ('cancelled')))
-        + (SELECT COUNT(*) FROM crm_sessions WHERE session_date >= $1 AND session_date <= $3 AND (status IS NULL OR status NOT IN ('cancelled'))) as sessions_this_week,
-        (SELECT COALESCE(SUM(price), 0) FROM crm_first_sessions WHERE session_date >= $2 AND (status IS NULL OR status NOT IN ('cancelled')))
-        + (SELECT COALESCE(SUM(price), 0) FROM crm_sessions WHERE session_date >= $2 AND (status IS NULL OR status NOT IN ('cancelled'))) as revenue_this_month
+        (SELECT COUNT(*) FROM crm_parents WHERE COALESCE(is_dead, false) = false) as total_contacts,
+        (SELECT COUNT(*)
+         FROM crm_first_sessions fs
+         JOIN crm_parents p ON p.id = fs.parent_id
+         WHERE fs.session_date >= $1
+           AND fs.session_date <= $3
+           AND (fs.status IS NULL OR fs.status NOT IN ('cancelled'))
+           AND COALESCE(p.is_dead, false) = false)
+        + (SELECT COUNT(*)
+           FROM crm_sessions s
+           JOIN crm_parents p ON p.id = s.parent_id
+           WHERE s.session_date >= $1
+             AND s.session_date <= $3
+             AND (s.status IS NULL OR s.status NOT IN ('cancelled'))
+             AND COALESCE(p.is_dead, false) = false) as sessions_this_week,
+        (SELECT COALESCE(SUM(fs.price), 0)
+         FROM crm_first_sessions fs
+         JOIN crm_parents p ON p.id = fs.parent_id
+         WHERE fs.session_date >= $2
+           AND (fs.status IS NULL OR fs.status NOT IN ('cancelled'))
+           AND COALESCE(p.is_dead, false) = false)
+        + (SELECT COALESCE(SUM(s.price), 0)
+           FROM crm_sessions s
+           JOIN crm_parents p ON p.id = s.parent_id
+           WHERE s.session_date >= $2
+             AND (s.status IS NULL OR s.status NOT IN ('cancelled'))
+             AND COALESCE(p.is_dead, false) = false) as revenue_this_month
     `,
       [weekStartStr, monthStartStr, todayEnd]
     );
@@ -139,6 +185,7 @@ export async function GET(request: NextRequest) {
     const upcomingCallsResult = await query(
       `SELECT * FROM crm_parents
        WHERE phone_call_booked = true
+       AND COALESCE(is_dead, false) = false
        AND (call_outcome IS NULL OR call_outcome NOT IN ('session_booked', 'uninterested'))
        AND (
          (call_date_time >= $1 AND call_date_time <= $2)
@@ -159,6 +206,7 @@ export async function GET(request: NextRequest) {
        LEFT JOIN crm_players pl ON pl.id = fsp.player_id
        WHERE fs.session_date >= $1 AND fs.session_date <= $2
        AND (fs.status IS NULL OR fs.status NOT IN ('cancelled', 'completed'))
+       AND COALESCE(p.is_dead, false) = false
        GROUP BY fs.id, p.name
        ORDER BY fs.session_date`,
       [todayStart, futureDateStr]
@@ -175,6 +223,7 @@ export async function GET(request: NextRequest) {
        LEFT JOIN crm_players pl ON pl.id = sp.player_id
        WHERE s.session_date >= $1 AND s.session_date <= $2
        AND (s.status IS NULL OR s.status NOT IN ('cancelled', 'completed'))
+       AND COALESCE(p.is_dead, false) = false
        GROUP BY s.id, p.name
        ORDER BY s.session_date`,
       [todayStart, futureDateStr]
@@ -186,13 +235,35 @@ export async function GET(request: NextRequest) {
       SELECT r.*,
         p.dm_status as parent_dm_status,
         CASE
+          WHEN r.reminder_category = 'session_reminder' THEN
+            CASE
+              WHEN r.session_id IS NOT NULL THEN (
+                SELECT ARRAY_AGG(pl.name ORDER BY pl.created_at)
+                FROM crm_session_players sp
+                JOIN crm_players pl ON pl.id = sp.player_id
+                WHERE sp.session_id = r.session_id
+              )
+              WHEN r.first_session_id IS NOT NULL THEN (
+                SELECT ARRAY_AGG(pl.name ORDER BY pl.created_at)
+                FROM crm_first_session_players fsp
+                JOIN crm_players pl ON pl.id = fsp.player_id
+                WHERE fsp.first_session_id = r.first_session_id
+              )
+              ELSE NULL
+            END
+          ELSE NULL
+        END as player_names,
+        CASE
           WHEN p.secondary_parent_name IS NOT NULL AND TRIM(COALESCE(p.secondary_parent_name, '')) != ''
           THEN p.name || ' and ' || p.secondary_parent_name
           ELSE p.name
         END as parent_name
       FROM crm_reminders r
       JOIN crm_parents p ON p.id = r.parent_id
-      WHERE r.sent = false AND r.due_at >= $1 AND r.due_at <= $2
+      WHERE r.sent = false
+        AND COALESCE(p.is_dead, false) = false
+        AND r.due_at >= $1
+        AND r.due_at <= $2
       ORDER BY r.due_at ASC
     `,
       [todayStart, futureDateStr]

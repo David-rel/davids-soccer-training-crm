@@ -31,6 +31,33 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search');
     const sort = searchParams.get('sort') || 'recent';
     const filter = searchParams.get('filter');
+    const countOnly = searchParams.get('count_only') === 'true';
+    const includeDead = searchParams.get('include_dead') === 'true';
+
+    const params: string[] = [];
+    const conditions: string[] = [];
+
+    if (!includeDead) {
+      conditions.push(`COALESCE(p.is_dead, false) = false`);
+    }
+
+    if (filter === 'customers') {
+      conditions.push(`p.is_customer = true`);
+    }
+
+    if (search) {
+      params.push(`%${search}%`);
+      conditions.push(`(p.name ILIKE $${params.length} OR p.email ILIKE $${params.length} OR p.phone ILIKE $${params.length} OR p.instagram_link ILIKE $${params.length})`);
+    }
+
+    if (countOnly) {
+      let countSql = 'SELECT COUNT(*)::int as count FROM crm_parents p';
+      if (conditions.length > 0) {
+        countSql += ` WHERE ${conditions.join(' AND ')}`;
+      }
+      const countResult = await query(countSql, params);
+      return jsonResponse(countResult.rows[0]);
+    }
 
     let sql = `
       SELECT p.*,
@@ -64,17 +91,6 @@ export async function GET(request: NextRequest) {
         (SELECT ARRAY_AGG(name ORDER BY created_at) FROM crm_players WHERE parent_id = p.id) as player_names
       FROM crm_parents p
     `;
-    const params: string[] = [];
-    const conditions: string[] = [];
-
-    if (filter === 'customers') {
-      conditions.push(`p.is_customer = true`);
-    }
-
-    if (search) {
-      params.push(`%${search}%`);
-      conditions.push(`(p.name ILIKE $${params.length} OR p.email ILIKE $${params.length} OR p.phone ILIKE $${params.length} OR p.instagram_link ILIKE $${params.length})`);
-    }
 
     if (conditions.length > 0) {
       sql += ` WHERE ${conditions.join(' AND ')}`;

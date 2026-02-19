@@ -74,6 +74,7 @@ export async function POST(request: Request) {
         EXTRACT(DAY FROM NOW() - p.last_activity_at) as days_inactive
       FROM crm_parents p
       WHERE p.last_activity_at < NOW() - INTERVAL '1 day'
+        AND COALESCE(p.is_dead, false) = false
       ORDER BY p.last_activity_at ASC
     `;
 

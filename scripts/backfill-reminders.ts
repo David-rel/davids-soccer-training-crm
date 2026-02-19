@@ -18,6 +18,7 @@ async function backfillReminders() {
       FROM crm_first_sessions fs
       JOIN crm_parents p ON p.id = fs.parent_id
       WHERE fs.status = 'scheduled'
+        AND COALESCE(p.is_dead, false) = false
         AND fs.cancelled = false
         AND fs.session_date > NOW()
         AND NOT EXISTS (
@@ -47,6 +48,7 @@ async function backfillReminders() {
       FROM crm_sessions s
       JOIN crm_parents p ON p.id = s.parent_id
       WHERE s.status = 'scheduled'
+        AND COALESCE(p.is_dead, false) = false
         AND s.cancelled = false
         AND s.session_date > NOW()
         AND NOT EXISTS (
@@ -75,6 +77,7 @@ async function backfillReminders() {
       SELECT p.id, p.name, p.dm_status
       FROM crm_parents p
       WHERE p.dm_status IN ('first_message', 'started_talking', 'request_phone_call')
+        AND COALESCE(p.is_dead, false) = false
         AND p.phone_call_booked = false
         AND NOT EXISTS (
           SELECT 1 FROM crm_reminders r
@@ -98,6 +101,7 @@ async function backfillReminders() {
       SELECT p.id, p.name, p.call_outcome
       FROM crm_parents p
       WHERE p.call_outcome IN ('thinking_about_it', 'went_cold')
+        AND COALESCE(p.is_dead, false) = false
         AND NOT EXISTS (
           SELECT 1 FROM crm_reminders r
           WHERE r.parent_id = p.id

@@ -41,7 +41,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     // Get sessions tied to this package
     const sessionsResult = await query(
-      `SELECT s.*, ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL) as player_names
+      `SELECT
+         s.*,
+         ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL) as player_names,
+         ARRAY_AGG(pl.id) FILTER (WHERE pl.id IS NOT NULL) as player_ids
        FROM crm_sessions s 
        LEFT JOIN crm_session_players sp ON sp.session_id = s.id
        LEFT JOIN crm_players pl ON pl.id = sp.player_id 

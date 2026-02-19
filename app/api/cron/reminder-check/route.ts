@@ -91,6 +91,7 @@ export async function POST(request: Request) {
       FROM crm_first_sessions fs
       JOIN crm_parents p ON p.id = fs.parent_id
       WHERE (fs.status IS NULL OR fs.status NOT IN ('cancelled', 'completed', 'no_show'))
+        AND COALESCE(p.is_dead, false) = false
         AND fs.session_date > NOW()
         AND NOT EXISTS (
           SELECT 1 FROM crm_reminders r
@@ -114,6 +115,7 @@ export async function POST(request: Request) {
       FROM crm_sessions s
       JOIN crm_parents p ON p.id = s.parent_id
       WHERE (s.status IS NULL OR s.status NOT IN ('cancelled', 'completed', 'no_show'))
+        AND COALESCE(p.is_dead, false) = false
         AND s.session_date > NOW()
         AND NOT EXISTS (
           SELECT 1 FROM crm_reminders r
@@ -147,6 +149,7 @@ export async function POST(request: Request) {
         EXTRACT(DAY FROM NOW() - p.last_activity_at) as days_inactive
       FROM crm_parents p
       WHERE p.last_activity_at < NOW() - INTERVAL '1 day'
+        AND COALESCE(p.is_dead, false) = false
       ORDER BY p.last_activity_at ASC
     `);
 
@@ -269,6 +272,19 @@ export async function POST(request: Request) {
       RETURNING id
     `);
     results.staleRemindersDeleted += deletedPastSessionReminders.rowCount || 0;
+
+    // Delete reminders belonging to contacts marked dead.
+    const deletedDeadContactReminders = await query(`
+      DELETE FROM crm_reminders r
+      WHERE r.sent = false
+        AND EXISTS (
+          SELECT 1 FROM crm_parents p
+          WHERE p.id = r.parent_id
+            AND COALESCE(p.is_dead, false) = true
+        )
+      RETURNING id
+    `);
+    results.staleRemindersDeleted += deletedDeadContactReminders.rowCount || 0;
 
     // Delete follow-up reminders for contacts who have progressed (e.g., booked a session)
     // DM follow-ups for people who now have a call booked

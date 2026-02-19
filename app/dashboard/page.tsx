@@ -47,7 +47,7 @@ interface DashboardData {
   todays_calls: Array<{ id: number; name: string; call_date_time: string | null; phone: string }>;
   todays_first_sessions: Array<{ id: number; parent_id: number; parent_name: string; player_names: string[] | null; player_ids: number[] | null; session_date: string; location: string | null; price: number | null; status: string }>;
   todays_sessions: Array<{ id: number; parent_id: number; parent_name: string; player_names: string[] | null; player_ids: number[] | null; session_date: string; location: string | null; price: number | null; status: string }>;
-  pending_reminders: Array<{ id: number; parent_name: string; parent_id: number; reminder_type: string; reminder_category: string; due_at: string; due_days_ago?: number; parent_dm_status: string | null }>;
+  pending_reminders: Array<{ id: number; parent_name: string; parent_id: number; reminder_type: string; reminder_category: string; due_at: string; due_days_ago?: number; parent_dm_status: string | null; player_names: string[] | null }>;
   stats: { total_contacts: number; sessions_this_week: number; revenue_this_month: number };
   selected_day_offset?: number;
 }
@@ -545,6 +545,12 @@ export default function DashboardPage() {
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                         <Typography sx={{ fontWeight: 600 }}>
                           Text {reminder.parent_name}
+                          {reminder.reminder_category === 'session_reminder' && reminder.player_names && reminder.player_names.length > 0 && (
+                            <Typography component="span" color="text.secondary">
+                              {' '}
+                              ({reminder.player_names.join(', ')})
+                            </Typography>
+                          )}
                         </Typography>
                         {(reminder.due_days_ago ?? 0) > 0 && (
                           <Chip

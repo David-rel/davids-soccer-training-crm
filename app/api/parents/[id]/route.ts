@@ -111,7 +111,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const allowedFields = [
       'name', 'email', 'phone', 'instagram_link', 'secondary_parent_name',
       'dm_status', 'phone_call_booked', 'call_date_time', 'call_outcome',
-      'interest_in_package', 'notes'
+      'interest_in_package', 'notes', 'is_dead'
     ];
 
     for (const field of allowedFields) {
@@ -195,6 +195,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           anchorTimezone: 'arizona_local',
         });
       }
+    }
+
+    if (newParent.is_dead === true && oldParent.is_dead !== true) {
+      await query(
+        `DELETE FROM crm_reminders WHERE parent_id = $1 AND sent = false`,
+        [id]
+      );
     }
 
     return jsonResponse(newParent);
