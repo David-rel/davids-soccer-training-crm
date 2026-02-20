@@ -18,6 +18,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import PeopleIcon from '@mui/icons-material/People';
 import EventIcon from '@mui/icons-material/Event';
+import GroupsIcon from '@mui/icons-material/Groups';
 import CardGiftcardIcon from '@mui/icons-material/CardGiftcard';
 import StarIcon from '@mui/icons-material/Star';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
@@ -32,6 +33,7 @@ const navItems = [
   { label: 'Contacts', href: '/contacts', icon: <PeopleIcon /> },
   { label: 'Customers', href: '/customers', icon: <StarIcon /> },
   { label: 'Sessions', href: '/sessions', icon: <EventIcon /> },
+  { label: 'Group Sessions', href: '/group-sessions', icon: <GroupsIcon /> },
   { label: 'Packages', href: '/packages', icon: <CardGiftcardIcon /> },
   { label: 'Finance Goals', href: '/finance-goals', icon: <AccountBalanceWalletIcon /> },
   { label: 'Expenses', href: '/expenses', icon: <ReceiptLongIcon /> },

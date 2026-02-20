@@ -36,6 +36,7 @@ interface FinanceGoalsData {
       date_label: string;
       packages: number;
       sessions: number;
+      group_sessions: number;
       sessions_possible: number;
       total: number;
     }>;
@@ -242,6 +243,9 @@ export default function FinanceGoalsPage() {
                   </Typography>
                   <Typography variant="caption" color="text.secondary" display="block">
                     Sessions: {currency.format(day.sessions)}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Group Sessions: {currency.format(day.group_sessions)}
                   </Typography>
                   <Typography variant="caption" color="text.secondary" display="block">
                     Possible: {currency.format(day.sessions_possible)}

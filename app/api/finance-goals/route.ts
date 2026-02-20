@@ -10,7 +10,7 @@ const MONTHLY_GOAL = 3200;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const TRACKING_START_WEEK = '2025-12-28';
 
-type DaySource = 'packages' | 'sessions';
+type DaySource = 'packages' | 'sessions' | 'group_sessions';
 
 interface DayRow {
   day_key: string;
@@ -96,7 +96,67 @@ function getTrackingStartWeekIsoArizona(): string {
   return fromZonedTime(`${TRACKING_START_WEEK}T00:00:00`, ARIZONA_TIMEZONE).toISOString();
 }
 
-const PAYMENTS_UNION_ALL = `
+async function hasGroupSessionPaymentsTables(): Promise<boolean> {
+  const result = await query(`
+    SELECT
+      to_regclass('public.group_sessions') IS NOT NULL AS has_group_sessions,
+      to_regclass('public.player_signups') IS NOT NULL AS has_player_signups
+  `);
+
+  const row = result.rows[0] as
+    | { has_group_sessions?: boolean; has_player_signups?: boolean }
+    | undefined;
+
+  return Boolean(row?.has_group_sessions && row?.has_player_signups);
+}
+
+const GROUP_SESSION_PAYMENTS_UNION_ALL = `
+  UNION ALL
+  SELECT COALESCE(ps.updated_at, ps.created_at) AS paid_at, gs.price::numeric AS amount
+  FROM player_signups ps
+  JOIN group_sessions gs ON gs.id = ps.group_session_id
+  WHERE ps.has_paid = true
+    AND gs.price IS NOT NULL
+    AND COALESCE(ps.updated_at, ps.created_at) <= $1
+`;
+
+const GROUP_SESSION_PAYMENTS_UNION_FILTERED = `
+  UNION ALL
+  SELECT COALESCE(ps.updated_at, ps.created_at) AS paid_at, gs.price::numeric AS amount
+  FROM player_signups ps
+  JOIN group_sessions gs ON gs.id = ps.group_session_id
+  WHERE ps.has_paid = true
+    AND gs.price IS NOT NULL
+    AND COALESCE(ps.updated_at, ps.created_at) >= $1
+    AND COALESCE(ps.updated_at, ps.created_at) <= $2
+    AND COALESCE(ps.updated_at, ps.created_at) <= $3
+`;
+
+const GROUP_SESSION_WEEK_BREAKDOWN_UNION = `
+            UNION ALL
+            SELECT COALESCE(ps.updated_at, ps.created_at) AS paid_at, gs.price::numeric AS amount, 'group_sessions'::text AS source
+            FROM player_signups ps
+            JOIN group_sessions gs ON gs.id = ps.group_session_id
+            WHERE ps.has_paid = true
+              AND gs.price IS NOT NULL
+              AND COALESCE(ps.updated_at, ps.created_at) >= $1
+              AND COALESCE(ps.updated_at, ps.created_at) <= $2
+              AND COALESCE(ps.updated_at, ps.created_at) <= $3
+`;
+
+const GROUP_SESSION_PAST_WEEKS_UNION = `
+            UNION ALL
+            SELECT COALESCE(ps.updated_at, ps.created_at) AS paid_at, gs.price::numeric AS amount
+            FROM player_signups ps
+            JOIN group_sessions gs ON gs.id = ps.group_session_id
+            WHERE ps.has_paid = true
+              AND gs.price IS NOT NULL
+              AND COALESCE(ps.updated_at, ps.created_at) >= $1
+              AND COALESCE(ps.updated_at, ps.created_at) < $2
+`;
+
+function buildPaymentsUnionAll(includeGroupSessions: boolean): string {
+  return `
   SELECT created_at AS paid_at, amount::numeric AS amount
   FROM crm_package_payment_events
   WHERE amount > 0
@@ -116,9 +176,12 @@ const PAYMENTS_UNION_ALL = `
     AND session_date <= $1
     AND COALESCE(cancelled, false) = false
     AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))
+  ${includeGroupSessions ? GROUP_SESSION_PAYMENTS_UNION_ALL : ''}
 `;
+}
 
-const PAYMENTS_UNION_FILTERED = `
+function buildPaymentsUnionFiltered(includeGroupSessions: boolean): string {
+  return `
   SELECT created_at AS paid_at, amount::numeric AS amount
   FROM crm_package_payment_events
   WHERE amount > 0
@@ -144,7 +207,9 @@ const PAYMENTS_UNION_FILTERED = `
     AND session_date <= $3
     AND COALESCE(cancelled, false) = false
     AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))
+  ${includeGroupSessions ? GROUP_SESSION_PAYMENTS_UNION_FILTERED : ''}
 `;
+}
 
 const ALL_SESSIONS_WITH_DETAILS = `
   SELECT
@@ -197,6 +262,9 @@ export async function GET() {
     const weekBounds = getWeekBoundsArizona();
     const monthBounds = getMonthBoundsArizona();
     const nowIso = new Date().toISOString();
+    const includeGroupSessions = await hasGroupSessionPaymentsTables();
+    const paymentsUnionAll = buildPaymentsUnionAll(includeGroupSessions);
+    const paymentsUnionFiltered = buildPaymentsUnionFiltered(includeGroupSessions);
 
     const [
       weekBreakdownResult,
@@ -240,6 +308,7 @@ export async function GET() {
               AND session_date <= $3
               AND COALESCE(cancelled, false) = false
               AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))
+            ${includeGroupSessions ? GROUP_SESSION_WEEK_BREAKDOWN_UNION : ''}
           ) payments
           GROUP BY day_key, source
           ORDER BY day_key ASC
@@ -300,6 +369,7 @@ export async function GET() {
               AND session_date < $2
               AND COALESCE(cancelled, false) = false
               AND (status IS NULL OR status NOT IN ('cancelled', 'no_show'))
+            ${includeGroupSessions ? GROUP_SESSION_PAST_WEEKS_UNION : ''}
           ),
           localized AS (
             SELECT
@@ -322,14 +392,14 @@ export async function GET() {
       query(
         `
         SELECT COALESCE(SUM(amount), 0) AS total
-        FROM (${PAYMENTS_UNION_FILTERED}) AS payments
+        FROM (${paymentsUnionFiltered}) AS payments
       `,
         [monthBounds.start, monthBounds.end, nowIso]
       ),
       query(
         `
         SELECT COALESCE(SUM(amount), 0) AS total
-        FROM (${PAYMENTS_UNION_ALL}) AS payments
+        FROM (${paymentsUnionAll}) AS payments
       `,
         [nowIso]
       ),
@@ -338,7 +408,7 @@ export async function GET() {
           SELECT
             TO_CHAR(((paid_at AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')::date, 'YYYY') AS year_key,
             COALESCE(SUM(amount), 0) AS total
-          FROM (${PAYMENTS_UNION_ALL}) AS payments
+          FROM (${paymentsUnionAll}) AS payments
           GROUP BY year_key
           ORDER BY year_key ASC
         `,
@@ -380,6 +450,7 @@ export async function GET() {
         date_label: string;
         packages: number;
         sessions: number;
+        group_sessions: number;
         sessions_possible: number;
         total: number;
       }
@@ -395,6 +466,7 @@ export async function GET() {
         date_label: formatInTimeZone(dayDate, ARIZONA_TIMEZONE, 'MM/dd'),
         packages: 0,
         sessions: 0,
+        group_sessions: 0,
         sessions_possible: 0,
         total: 0,
       };
@@ -407,6 +479,8 @@ export async function GET() {
       const amount = asNumber(row.amount);
       if (row.source === 'packages') {
         day.packages += amount;
+      } else if (row.source === 'group_sessions') {
+        day.group_sessions += amount;
       } else {
         day.sessions += amount;
       }
@@ -423,6 +497,7 @@ export async function GET() {
       ...day,
       packages: round2(day.packages),
       sessions: round2(day.sessions),
+      group_sessions: round2(day.group_sessions),
       sessions_possible: round2(day.sessions_possible),
       total: round2(day.total),
     }));
