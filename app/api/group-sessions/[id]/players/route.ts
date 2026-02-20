@@ -40,7 +40,7 @@ async function getSessionCapacity(groupSessionId: string) {
     `SELECT
       gs.id,
       gs.max_players,
-      COUNT(ps.id)::int AS player_count
+      COUNT(ps.id) FILTER (WHERE ps.has_paid = true)::int AS paid_player_count
     FROM group_sessions gs
     LEFT JOIN player_signups ps ON ps.group_session_id = gs.id
     WHERE gs.id = $1
@@ -51,7 +51,7 @@ async function getSessionCapacity(groupSessionId: string) {
   if (result.rows.length === 0) return null;
   return {
     maxPlayers: Number(result.rows[0].max_players),
-    playerCount: Number(result.rows[0].player_count),
+    paidPlayerCount: Number(result.rows[0].paid_player_count),
   };
 }
 
@@ -102,7 +102,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return errorResponse('Group session not found', 404);
     }
 
-    if (capacity.playerCount >= capacity.maxPlayers) {
+    const isPaidSignup = body.has_paid === true;
+    if (isPaidSignup && capacity.paidPlayerCount >= capacity.maxPlayers) {
       return errorResponse('This group session is already full', 400);
     }
 
@@ -135,7 +136,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         normalizeOptionalText(body.foot),
         normalizeOptionalText(body.team),
         normalizeOptionalText(body.notes),
-        body.has_paid === true,
+        isPaidSignup,
         normalizeOptionalText(body.stripe_payment_intent_id),
         normalizeOptionalText(body.stripe_checkout_session_id),
         normalizeOptionalText(body.stripe_charge_id),

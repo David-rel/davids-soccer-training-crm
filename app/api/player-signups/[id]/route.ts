@@ -19,6 +19,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   try {
     const { id } = await params;
     const body = await request.json();
+    let requestedHasPaid: boolean | null = null;
 
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -75,12 +76,48 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     if ('has_paid' in body) {
+      requestedHasPaid = body.has_paid === true;
       fields.push(`has_paid = $${paramIndex++}`);
-      values.push(body.has_paid === true);
+      values.push(requestedHasPaid);
     }
 
     if (fields.length === 0) {
       return errorResponse('No fields to update', 400);
+    }
+
+    if (requestedHasPaid === true) {
+      const signupResult = await query(
+        `SELECT ps.group_session_id, ps.has_paid, gs.max_players
+         FROM player_signups ps
+         JOIN group_sessions gs ON gs.id = ps.group_session_id
+         WHERE ps.id = $1`,
+        [id]
+      );
+
+      if (signupResult.rows.length === 0) {
+        return errorResponse('Player signup not found', 404);
+      }
+
+      const signup = signupResult.rows[0] as {
+        group_session_id: number;
+        has_paid: boolean;
+        max_players: number;
+      };
+
+      if (!signup.has_paid) {
+        const capacityResult = await query(
+          `SELECT COUNT(*)::int AS paid_player_count
+           FROM player_signups
+           WHERE group_session_id = $1
+             AND has_paid = true`,
+          [signup.group_session_id]
+        );
+
+        const paidPlayerCount = Number(capacityResult.rows[0]?.paid_player_count || 0);
+        if (paidPlayerCount >= Number(signup.max_players)) {
+          return errorResponse('This group session is already full', 400);
+        }
+      }
     }
 
     fields.push('updated_at = CURRENT_TIMESTAMP');

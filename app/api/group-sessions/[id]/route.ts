@@ -17,6 +17,7 @@ interface GroupSessionRow {
   curriculum: string | null;
   max_players: number;
   player_count: number;
+  prospect_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -36,6 +37,7 @@ function mapGroupSession(row: GroupSessionRow) {
     price: row.price == null ? null : round2(asNumber(row.price)),
     max_players: asNumber(row.max_players),
     player_count: asNumber(row.player_count),
+    prospect_count: asNumber(row.prospect_count),
   };
 }
 
@@ -65,7 +67,8 @@ async function getGroupSession(id: string) {
   const result = await query(
     `SELECT
       gs.*,
-      COUNT(ps.id)::int AS player_count
+      COUNT(ps.id) FILTER (WHERE ps.has_paid = true)::int AS player_count,
+      COUNT(ps.id) FILTER (WHERE COALESCE(ps.has_paid, false) = false)::int AS prospect_count
     FROM group_sessions gs
     LEFT JOIN player_signups ps ON ps.group_session_id = gs.id
     WHERE gs.id = $1
@@ -113,8 +116,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     if ('image_url' in body) {
+      const imageUrl = normalizeOptionalText(body.image_url);
+      if (!imageUrl) return errorResponse('Image URL is required', 400);
       fields.push(`image_url = $${paramIndex++}`);
-      values.push(normalizeOptionalText(body.image_url));
+      values.push(imageUrl);
     }
 
     if ('session_date' in body) {
@@ -133,8 +138,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     if ('location' in body) {
+      const location = normalizeOptionalText(body.location);
+      if (!location) return errorResponse('Location is required', 400);
       fields.push(`location = $${paramIndex++}`);
-      values.push(normalizeOptionalText(body.location));
+      values.push(location);
     }
 
     if ('price' in body) {
@@ -160,7 +167,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       const countResult = await query(
         `SELECT COUNT(*)::int AS player_count
          FROM player_signups
-         WHERE group_session_id = $1`,
+         WHERE group_session_id = $1
+           AND has_paid = true`,
         [id]
       );
 

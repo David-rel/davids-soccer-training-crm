@@ -17,6 +17,7 @@ interface GroupSessionRow {
   curriculum: string | null;
   max_players: number;
   player_count: number;
+  prospect_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -36,6 +37,7 @@ function mapGroupSession(row: GroupSessionRow) {
     price: row.price == null ? null : round2(asNumber(row.price)),
     max_players: asNumber(row.max_players),
     player_count: asNumber(row.player_count),
+    prospect_count: asNumber(row.prospect_count),
   };
 }
 
@@ -66,7 +68,8 @@ export async function GET() {
     const result = await query(
       `SELECT
         gs.*,
-        COUNT(ps.id)::int AS player_count
+        COUNT(ps.id) FILTER (WHERE ps.has_paid = true)::int AS player_count,
+        COUNT(ps.id) FILTER (WHERE COALESCE(ps.has_paid, false) = false)::int AS prospect_count
       FROM group_sessions gs
       LEFT JOIN player_signups ps ON ps.group_session_id = gs.id
       GROUP BY gs.id
@@ -95,8 +98,8 @@ export async function POST(request: NextRequest) {
     const maxPlayers = Number(body.max_players);
     const price = body.price == null || String(body.price).trim() === '' ? null : Number(body.price);
 
-    if (!title || !sessionDate || !Number.isInteger(maxPlayers) || maxPlayers < 1) {
-      return errorResponse('Title, date, and max players are required', 400);
+    if (!title || !imageUrl || !location || !sessionDate || !Number.isInteger(maxPlayers) || maxPlayers < 1) {
+      return errorResponse('Title, image URL, location, date, and max players are required', 400);
     }
 
     if (sessionDateEnd && new Date(sessionDateEnd) < new Date(sessionDate)) {
@@ -134,7 +137,14 @@ export async function POST(request: NextRequest) {
       ]
     );
 
-    return jsonResponse(mapGroupSession({ ...(result.rows[0] as GroupSessionRow), player_count: 0 }), 201);
+    return jsonResponse(
+      mapGroupSession({
+        ...(result.rows[0] as GroupSessionRow),
+        player_count: 0,
+        prospect_count: 0,
+      }),
+      201
+    );
   } catch (error) {
     console.error('Error creating group session:', error);
     return errorResponse('Failed to create group session');

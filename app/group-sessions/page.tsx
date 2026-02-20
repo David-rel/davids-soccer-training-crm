@@ -28,6 +28,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import GroupIcon from '@mui/icons-material/Group';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
+import FlashOnIcon from '@mui/icons-material/FlashOn';
 import { formatArizonaDateTime, toDatetimeLocal } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -44,6 +45,7 @@ interface GroupSession {
   curriculum: string | null;
   max_players: number;
   player_count: number;
+  prospect_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -96,6 +98,14 @@ interface PlayerFormState {
   stripe_receipt_url: string;
 }
 
+interface QuickAddFormState {
+  friday_date: string;
+  sunday_date: string;
+  curriculum: string;
+  location: string;
+  image_url: string;
+}
+
 const money = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -131,6 +141,14 @@ const emptyPlayerForm: PlayerFormState = {
   stripe_receipt_url: '',
 };
 
+const emptyQuickAddForm: QuickAddFormState = {
+  friday_date: '',
+  sunday_date: '',
+  curriculum: '',
+  location: '',
+  image_url: '',
+};
+
 export default function GroupSessionsPage() {
   const [sessions, setSessions] = useState<GroupSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -141,6 +159,10 @@ export default function GroupSessionsPage() {
   const [sessionForm, setSessionForm] = useState<SessionFormState>(emptySessionForm);
   const [savingSession, setSavingSession] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [uploadingQuickAddImage, setUploadingQuickAddImage] = useState(false);
+  const [quickAddDialogOpen, setQuickAddDialogOpen] = useState(false);
+  const [quickAddForm, setQuickAddForm] = useState<QuickAddFormState>(emptyQuickAddForm);
+  const [quickAdding, setQuickAdding] = useState(false);
 
   const [playersDialogSession, setPlayersDialogSession] = useState<GroupSession | null>(null);
   const [players, setPlayers] = useState<PlayerSignup[]>([]);
@@ -205,6 +227,11 @@ export default function GroupSessionsPage() {
     setSessionDialogOpen(true);
   };
 
+  const openQuickAddDialog = () => {
+    setQuickAddForm(emptyQuickAddForm);
+    setQuickAddDialogOpen(true);
+  };
+
   const openEditSessionDialog = (session: GroupSession) => {
     setEditingSession(session);
     setSessionForm({
@@ -253,8 +280,47 @@ export default function GroupSessionsPage() {
     }
   };
 
+  const handleQuickAddImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploadingQuickAddImage(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.set('file', file);
+
+      const res = await fetch('/api/group-sessions/upload-image', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error || 'Failed to upload image');
+      }
+
+      const payload = (await res.json()) as { url: string };
+      setQuickAddForm((prev) => ({ ...prev, image_url: payload.url }));
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'Failed to upload image');
+    } finally {
+      setUploadingQuickAddImage(false);
+      event.target.value = '';
+    }
+  };
+
   const saveSession = async () => {
-    if (!sessionForm.title.trim() || !sessionForm.session_date || !sessionForm.max_players.trim()) {
+    if (
+      !sessionForm.title.trim() ||
+      !sessionForm.session_date ||
+      !sessionForm.location.trim() ||
+      !sessionForm.image_url.trim() ||
+      !sessionForm.max_players.trim()
+    ) {
+      setError('Title, image URL, location, date, and max players are required.');
       return;
     }
 
@@ -337,6 +403,49 @@ export default function GroupSessionsPage() {
     } catch (err) {
       console.error(err);
       setError(err instanceof Error ? err.message : 'Failed to delete group session');
+    }
+  };
+
+  const handleQuickAdd = async () => {
+    if (
+      !quickAddForm.friday_date.trim() ||
+      !quickAddForm.sunday_date.trim() ||
+      !quickAddForm.curriculum.trim() ||
+      !quickAddForm.location.trim() ||
+      !quickAddForm.image_url.trim()
+    ) {
+      return;
+    }
+
+    setQuickAdding(true);
+    setError(null);
+
+    try {
+      const res = await fetch('/api/group-sessions/quick-add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          friday_date: quickAddForm.friday_date.trim(),
+          sunday_date: quickAddForm.sunday_date.trim(),
+          curriculum: quickAddForm.curriculum.trim(),
+          location: quickAddForm.location.trim(),
+          image_url: quickAddForm.image_url.trim(),
+        }),
+      });
+
+      if (!res.ok) {
+        const errorPayload = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(errorPayload?.error || 'Failed to quick-add group sessions');
+      }
+
+      setQuickAddDialogOpen(false);
+      setQuickAddForm(emptyQuickAddForm);
+      await fetchSessions();
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : 'Failed to quick-add group sessions');
+    } finally {
+      setQuickAdding(false);
     }
   };
 
@@ -465,6 +574,78 @@ export default function GroupSessionsPage() {
   const activePlayersDialogSession = playersDialogSession
     ? sessions.find((session) => session.id === playersDialogSession.id) || playersDialogSession
     : null;
+  const paidPlayers = players.filter((player) => player.has_paid);
+  const prospectPlayers = players.filter((player) => !player.has_paid);
+
+  const renderPlayerTable = (rows: PlayerSignup[]) => (
+    <TableContainer component={Paper} variant="outlined">
+      <Table size="small">
+        <TableHead>
+          <TableRow>
+            <TableCell>Player</TableCell>
+            <TableCell>Contact</TableCell>
+            <TableCell>Details</TableCell>
+            <TableCell>Paid</TableCell>
+            <TableCell align="right">Actions</TableCell>
+          </TableRow>
+        </TableHead>
+        <TableBody>
+          {rows.map((player) => (
+            <TableRow key={player.id} hover>
+              <TableCell>
+                <Typography sx={{ fontWeight: 600 }}>
+                  {player.first_name} {player.last_name}
+                </Typography>
+                {player.notes && (
+                  <Typography variant="body2" color="text.secondary" noWrap>
+                    {player.notes}
+                  </Typography>
+                )}
+              </TableCell>
+              <TableCell>
+                <Typography>{player.emergency_contact}</Typography>
+                <Typography variant="body2" color="text.secondary" noWrap>
+                  {player.contact_email}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {player.contact_phone || 'No phone'}
+                </Typography>
+              </TableCell>
+              <TableCell>
+                {[player.team && `Team: ${player.team}`, player.foot && `Foot: ${player.foot}`]
+                  .filter(Boolean)
+                  .join(' · ') || '—'}
+              </TableCell>
+              <TableCell>
+                <Chip
+                  size="small"
+                  color={player.has_paid ? 'success' : 'default'}
+                  label={player.has_paid ? 'Paid' : 'Unpaid'}
+                />
+              </TableCell>
+              <TableCell align="right">
+                <IconButton
+                  size="small"
+                  title="Edit player"
+                  onClick={() => openEditPlayerDialog(player)}
+                >
+                  <EditIcon fontSize="small" />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  color="error"
+                  title="Delete player"
+                  onClick={() => deletePlayer(player)}
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </TableContainer>
+  );
 
   if (loading) return <Typography>Loading group sessions...</Typography>;
 
@@ -474,9 +655,14 @@ export default function GroupSessionsPage() {
         <Typography variant="h4" sx={{ fontWeight: 700 }}>
           Group Sessions
         </Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={openCreateSessionDialog}>
-          New Group Session
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button variant="outlined" startIcon={<FlashOnIcon />} onClick={openQuickAddDialog}>
+            Quick Add
+          </Button>
+          <Button variant="contained" startIcon={<AddIcon />} onClick={openCreateSessionDialog}>
+            New Group Session
+          </Button>
+        </Box>
       </Box>
 
       {error && (
@@ -570,6 +756,11 @@ export default function GroupSessionsPage() {
                         <Typography variant="body2" color="text.secondary">
                           {spotsLeft} spot{spotsLeft === 1 ? '' : 's'} left
                         </Typography>
+                        {session.prospect_count > 0 && (
+                          <Typography variant="body2" color="text.secondary">
+                            {session.prospect_count} prospect{session.prospect_count === 1 ? '' : 's'}
+                          </Typography>
+                        )}
                       </Box>
                     </TableCell>
                     <TableCell align="right">
@@ -603,6 +794,105 @@ export default function GroupSessionsPage() {
           </Table>
         </TableContainer>
       )}
+
+      <Dialog
+        open={quickAddDialogOpen}
+        onClose={() => setQuickAddDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Quick Add Weekend Sessions</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 2 }}>
+            Creates 4 sessions: Friday (8-10, 11-13) and Sunday (8-10, 11-13), each at
+            $50 with 12 max players.
+          </Typography>
+          <Box sx={{ display: 'grid', gap: 2 }}>
+            <TextField
+              label="Friday Date *"
+              type="date"
+              value={quickAddForm.friday_date}
+              onChange={(e) =>
+                setQuickAddForm((prev) => ({ ...prev, friday_date: e.target.value }))
+              }
+              fullWidth
+              required
+              slotProps={{ inputLabel: { shrink: true } }}
+            />
+            <TextField
+              label="Sunday Date *"
+              type="date"
+              value={quickAddForm.sunday_date}
+              onChange={(e) =>
+                setQuickAddForm((prev) => ({ ...prev, sunday_date: e.target.value }))
+              }
+              fullWidth
+              required
+              slotProps={{ inputLabel: { shrink: true } }}
+            />
+            <TextField
+              label="Curriculum *"
+              value={quickAddForm.curriculum}
+              onChange={(e) =>
+                setQuickAddForm((prev) => ({ ...prev, curriculum: e.target.value }))
+              }
+              multiline
+              rows={3}
+              fullWidth
+              required
+            />
+            <TextField
+              label="Location *"
+              value={quickAddForm.location}
+              onChange={(e) =>
+                setQuickAddForm((prev) => ({ ...prev, location: e.target.value }))
+              }
+              fullWidth
+              required
+            />
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <Button
+                component="label"
+                variant="outlined"
+                startIcon={<UploadFileIcon />}
+                disabled={uploadingQuickAddImage}
+              >
+                {uploadingQuickAddImage ? 'Uploading...' : 'Upload Image'}
+                <input hidden type="file" accept="image/*" onChange={handleQuickAddImageUpload} />
+              </Button>
+              <Typography variant="body2" color="text.secondary">
+                Vercel Blob upload
+              </Typography>
+            </Box>
+            <TextField
+              label="Image URL *"
+              value={quickAddForm.image_url}
+              onChange={(e) =>
+                setQuickAddForm((prev) => ({ ...prev, image_url: e.target.value }))
+              }
+              fullWidth
+              required
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setQuickAddDialogOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleQuickAdd}
+            disabled={
+              quickAdding ||
+              !quickAddForm.friday_date.trim() ||
+              !quickAddForm.sunday_date.trim() ||
+              !quickAddForm.curriculum.trim() ||
+              !quickAddForm.location.trim() ||
+              !quickAddForm.image_url.trim()
+            }
+          >
+            {quickAdding ? 'Adding...' : 'Create 4 Sessions'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog
         open={sessionDialogOpen}
@@ -649,10 +939,11 @@ export default function GroupSessionsPage() {
               slotProps={{ inputLabel: { shrink: true } }}
             />
             <TextField
-              label="Location"
+              label="Location *"
               value={sessionForm.location}
               onChange={(e) => setSessionForm((prev) => ({ ...prev, location: e.target.value }))}
               fullWidth
+              required
             />
             <TextField
               label="Price ($)"
@@ -691,10 +982,11 @@ export default function GroupSessionsPage() {
               </Typography>
             </Box>
             <TextField
-              label="Image URL"
+              label="Image URL *"
               value={sessionForm.image_url}
               onChange={(e) => setSessionForm((prev) => ({ ...prev, image_url: e.target.value }))}
               fullWidth
+              required
               sx={{ gridColumn: { xs: 'span 1', md: 'span 2' } }}
             />
             <TextField
@@ -750,6 +1042,8 @@ export default function GroupSessionsPage() {
               savingSession ||
               !sessionForm.title.trim() ||
               !sessionForm.session_date ||
+              !sessionForm.location.trim() ||
+              !sessionForm.image_url.trim() ||
               !sessionForm.max_players.trim()
             }
           >
@@ -785,22 +1079,26 @@ export default function GroupSessionsPage() {
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Chip
                   size="small"
-                  color={players.length >= activePlayersDialogSession.max_players ? 'error' : 'primary'}
-                  label={`${players.length}/${activePlayersDialogSession.max_players}`}
+                  color={paidPlayers.length >= activePlayersDialogSession.max_players ? 'error' : 'primary'}
+                  label={`${paidPlayers.length}/${activePlayersDialogSession.max_players} paid`}
                 />
                 <Typography variant="body2" color="text.secondary">
-                  {Math.max(activePlayersDialogSession.max_players - players.length, 0)} spot
-                  {Math.max(activePlayersDialogSession.max_players - players.length, 0) === 1
+                  {Math.max(activePlayersDialogSession.max_players - paidPlayers.length, 0)} spot
+                  {Math.max(activePlayersDialogSession.max_players - paidPlayers.length, 0) === 1
                     ? ''
                     : 's'}
                   {' '}left
                 </Typography>
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  label={`${prospectPlayers.length} prospect${prospectPlayers.length === 1 ? '' : 's'}`}
+                />
               </Box>
               <Button
                 variant="contained"
                 startIcon={<AddIcon />}
                 onClick={openCreatePlayerDialog}
-                disabled={players.length >= activePlayersDialogSession.max_players}
               >
                 Add Player
               </Button>
@@ -812,73 +1110,25 @@ export default function GroupSessionsPage() {
           ) : players.length === 0 ? (
             <Typography color="text.secondary">No players in this group session yet.</Typography>
           ) : (
-            <TableContainer component={Paper} variant="outlined">
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Player</TableCell>
-                    <TableCell>Contact</TableCell>
-                    <TableCell>Details</TableCell>
-                    <TableCell>Paid</TableCell>
-                    <TableCell align="right">Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {players.map((player) => (
-                    <TableRow key={player.id} hover>
-                      <TableCell>
-                        <Typography sx={{ fontWeight: 600 }}>
-                          {player.first_name} {player.last_name}
-                        </Typography>
-                        {player.notes && (
-                          <Typography variant="body2" color="text.secondary" noWrap>
-                            {player.notes}
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Typography>{player.emergency_contact}</Typography>
-                        <Typography variant="body2" color="text.secondary" noWrap>
-                          {player.contact_email}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          {player.contact_phone || 'No phone'}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        {[player.team && `Team: ${player.team}`, player.foot && `Foot: ${player.foot}`]
-                          .filter(Boolean)
-                          .join(' · ') || '—'}
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          size="small"
-                          color={player.has_paid ? 'success' : 'default'}
-                          label={player.has_paid ? 'Paid' : 'Unpaid'}
-                        />
-                      </TableCell>
-                      <TableCell align="right">
-                        <IconButton
-                          size="small"
-                          title="Edit player"
-                          onClick={() => openEditPlayerDialog(player)}
-                        >
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                        <IconButton
-                          size="small"
-                          color="error"
-                          title="Delete player"
-                          onClick={() => deletePlayer(player)}
-                        >
-                          <DeleteIcon fontSize="small" />
-                        </IconButton>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+            <Box sx={{ display: 'grid', gap: 2 }}>
+              <Box>
+                <Typography sx={{ fontWeight: 700, mb: 1 }}>Players (Paid)</Typography>
+                {paidPlayers.length === 0 ? (
+                  <Typography color="text.secondary">No paid players yet.</Typography>
+                ) : (
+                  renderPlayerTable(paidPlayers)
+                )}
+              </Box>
+
+              <Box>
+                <Typography sx={{ fontWeight: 700, mb: 1 }}>Prospects (Unpaid)</Typography>
+                {prospectPlayers.length === 0 ? (
+                  <Typography color="text.secondary">No unpaid prospects.</Typography>
+                ) : (
+                  renderPlayerTable(prospectPlayers)
+                )}
+              </Box>
+            </Box>
           )}
         </DialogContent>
         <DialogActions>

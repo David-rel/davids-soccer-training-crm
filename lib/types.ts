@@ -140,6 +140,8 @@ export interface GroupSession {
   price: number | null;
   curriculum: string | null;
   max_players: number;
+  player_count?: number;
+  prospect_count?: number;
   created_at: string;
   updated_at: string;
 }
