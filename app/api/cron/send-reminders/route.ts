@@ -25,6 +25,7 @@ interface DueReminderRow {
   secondary_parent_name: string | null;
   parent_phone: string | null;
   session_date: string | Date | null;
+  primary_crm_player_id: number | null;
   player_names: string[] | null;
   total_sessions_through_current: number | null;
 }
@@ -58,6 +59,12 @@ interface ReminderStats {
     dueAt: string;
     to: string;
   }>;
+}
+
+interface AppReminderContext {
+  appPlayerId: string;
+  latestSessionId: string | null;
+  latestFeedbackId: string | null;
 }
 
 function normalizeUtcDate(dateValue: string | Date): Date {
@@ -157,6 +164,133 @@ function parseReminderTypes(value: string | null): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+let appTableStatusPromise:
+  | Promise<{ hasPlayers: boolean; hasCrmPlayerIdColumn: boolean; hasPlayerFeedback: boolean }>
+  | null = null;
+
+const appReminderContextCache = new Map<number, Promise<AppReminderContext | null>>();
+
+async function getAppTableStatus() {
+  if (!appTableStatusPromise) {
+    appTableStatusPromise = (async () => {
+      const result = await query(
+        `
+          SELECT
+            to_regclass('public.players') IS NOT NULL AS has_players,
+            to_regclass('public.player_feedback') IS NOT NULL AS has_player_feedback,
+            EXISTS (
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'players'
+                AND column_name = 'crm_player_id'
+            ) AS has_crm_player_id_column
+        `
+      );
+
+      const row = result.rows[0] as {
+        has_players: boolean;
+        has_player_feedback: boolean;
+        has_crm_player_id_column: boolean;
+      };
+
+      return {
+        hasPlayers: Boolean(row?.has_players),
+        hasCrmPlayerIdColumn: Boolean(row?.has_crm_player_id_column),
+        hasPlayerFeedback: Boolean(row?.has_player_feedback),
+      };
+    })();
+  }
+
+  return appTableStatusPromise;
+}
+
+async function fetchAppReminderContext(
+  crmPlayerId: number | null
+): Promise<AppReminderContext | null> {
+  if (!crmPlayerId) return null;
+
+  const cached = appReminderContextCache.get(crmPlayerId);
+  if (cached) return cached;
+
+  const pending = (async (): Promise<AppReminderContext | null> => {
+    const tableStatus = await getAppTableStatus();
+    if (!tableStatus.hasPlayers || !tableStatus.hasCrmPlayerIdColumn) {
+      return null;
+    }
+
+    const appPlayerResult = await query(
+      `
+        SELECT id::text AS app_player_id
+        FROM players
+        WHERE crm_player_id = $1
+        ORDER BY updated_at DESC, created_at DESC, id DESC
+        LIMIT 1
+      `,
+      [crmPlayerId]
+    );
+
+    const appPlayerRow = appPlayerResult.rows[0] as { app_player_id?: string } | undefined;
+    const appPlayerId = appPlayerRow?.app_player_id;
+    if (!appPlayerId) {
+      return null;
+    }
+
+    const latestSessionResult = await query(
+      `
+        WITH combined AS (
+          SELECT s.id::text AS session_id, s.session_date
+          FROM crm_sessions s
+          LEFT JOIN crm_session_players sp ON sp.session_id = s.id
+          WHERE (sp.player_id = $1 OR s.player_id = $1)
+            AND COALESCE(s.cancelled, false) = false
+            AND (s.status IS NULL OR s.status NOT IN ('cancelled', 'no_show'))
+          UNION ALL
+          SELECT fs.id::text AS session_id, fs.session_date
+          FROM crm_first_sessions fs
+          LEFT JOIN crm_first_session_players fsp ON fsp.first_session_id = fs.id
+          WHERE (fsp.player_id = $1 OR fs.player_id = $1)
+            AND COALESCE(fs.cancelled, false) = false
+            AND (fs.status IS NULL OR fs.status NOT IN ('cancelled', 'no_show'))
+        )
+        SELECT session_id
+        FROM combined
+        ORDER BY session_date DESC
+        LIMIT 1
+      `,
+      [crmPlayerId]
+    );
+
+    let latestFeedbackId: string | null = null;
+    if (tableStatus.hasPlayerFeedback) {
+      const feedbackResult = await query(
+        `
+          SELECT id::text AS id
+          FROM player_feedback
+          WHERE player_id::text = $1::text
+          ORDER BY updated_at DESC, created_at DESC
+          LIMIT 1
+        `,
+        [appPlayerId]
+      );
+
+      latestFeedbackId = (feedbackResult.rows[0] as { id?: string } | undefined)?.id ?? null;
+    }
+
+    const latestSessionId =
+      (latestSessionResult.rows[0] as { session_id?: string } | undefined)?.session_id ?? null;
+
+    return {
+      appPlayerId,
+      latestSessionId,
+      latestFeedbackId,
+    };
+  })();
+
+  appReminderContextCache.set(crmPlayerId, pending);
+  return pending;
 }
 
 async function getSameDayNotes(parentId: number, sessionDate: Date): Promise<string[]> {
@@ -287,16 +421,37 @@ async function buildMessage(row: DueReminderRow): Promise<PreparedMessage | null
       const parentPhone = normalizeUsPhoneNumber(row.parent_phone);
       if (!parentPhone) return null;
 
-      const profileLine = profileUrl
+      const appContext = await fetchAppReminderContext(row.primary_crm_player_id);
+      let profileLine = profileUrl
         ? `View profile + session plan: ${profileUrl}.`
         : "Please check your player profile for session updates and plan.";
+
+      if (appContext) {
+        const basePlayerUrl = `https://app.davidssoccertraining.com/player/${encodeURIComponent(
+          appContext.appPlayerId
+        )}`;
+        const sessionsUrl = appContext.latestSessionId
+          ? `${basePlayerUrl}#tab=sessions&sessionId=${encodeURIComponent(appContext.latestSessionId)}`
+          : `${basePlayerUrl}#tab=sessions`;
+        const testsTabUrl = `${basePlayerUrl}#tests`;
+        const feedbackUrl = appContext.latestFeedbackId
+          ? `${basePlayerUrl}#feedback:${encodeURIComponent(appContext.latestFeedbackId)}`
+          : `${basePlayerUrl}#feedback`;
+
+        profileLine = `Profile: ${basePlayerUrl}. Session plan: ${sessionsUrl}. Tests: ${testsTabUrl}. Feedback: ${feedbackUrl}.`;
+      }
+
       const profileUpdateLine =
         "If you haven't already, please update profile picture, date of birth, primary/secondary position, and any other profile info while you wait/watch.";
+      const firstSessionCredentialsLine =
+        row.total_sessions_through_current === 1
+          ? " Since this is your first session, ask Coach David for your username and password to access the profile."
+          : "";
 
       return {
         to: parentPhone,
         body: wrapMessage(
-          `Session time is now for ${playerLabel}. ${profileLine} ${profileUpdateLine}`
+          `Session time is now for ${playerLabel}. ${profileLine} ${profileUpdateLine}${firstSessionCredentialsLine}`
         ),
       };
     }
@@ -393,6 +548,27 @@ async function processDueReminders(
       p.secondary_parent_name,
       p.phone as parent_phone,
       COALESCE(s.session_date, fs.session_date) as session_date,
+      COALESCE(
+        CASE
+          WHEN r.session_id IS NOT NULL THEN (
+            SELECT sp.player_id
+            FROM crm_session_players sp
+            WHERE sp.session_id = r.session_id
+            ORDER BY sp.created_at ASC, sp.id ASC
+            LIMIT 1
+          )
+          WHEN r.first_session_id IS NOT NULL THEN (
+            SELECT fsp.player_id
+            FROM crm_first_session_players fsp
+            WHERE fsp.first_session_id = r.first_session_id
+            ORDER BY fsp.created_at ASC, fsp.id ASC
+            LIMIT 1
+          )
+          ELSE NULL
+        END,
+        s.player_id,
+        fs.player_id
+      ) as primary_crm_player_id,
       CASE
         WHEN r.session_id IS NOT NULL THEN (
           SELECT ARRAY_AGG(pl.name ORDER BY pl.created_at)
