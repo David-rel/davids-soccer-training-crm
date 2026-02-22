@@ -352,10 +352,12 @@ export default function LogicPage() {
         let ageMatch = 'Not set';
         let parkMatch = 'Not set';
         let scheduleMatch = 'Not set';
+        let ageExcluded = false;
 
         if (hasMinAge || hasMaxAge) {
           if (player.age == null || !Number.isFinite(player.age)) {
-            ageMatch = 'Unknown age';
+            ageMatch = 'Unknown age (excluded)';
+            ageExcluded = true;
           } else {
             const below = hasMinAge && player.age < (minAge as number);
             const above = hasMaxAge && player.age > (maxAge as number);
@@ -364,15 +366,10 @@ export default function LogicPage() {
               score += 40;
               notes.push('Age matches');
             } else {
-              const ageGap = below
-                ? (minAge as number) - player.age
-                : player.age - (maxAge as number);
-              const agePoints = Math.max(0, 40 - ageGap * 10);
-              score += agePoints;
               ageMatch = below
-                ? `${player.age} (below by ${ageGap})`
-                : `${player.age} (above by ${ageGap})`;
-              if (agePoints > 0) notes.push('Age close');
+                ? `${player.age} (below min ${minAge})`
+                : `${player.age} (above max ${maxAge})`;
+              ageExcluded = true;
             }
           }
         }
@@ -451,10 +448,17 @@ export default function LogicPage() {
           notes.push('Consistent session history');
         }
 
+        if (ageExcluded) {
+          score = 0;
+          notes.length = 0;
+          notes.push('Excluded by age range');
+        }
+
         const boundedScore = Math.max(0, Math.min(100, Math.round(score)));
         return {
           player,
           score: boundedScore,
+          age_excluded: ageExcluded,
           age_match: ageMatch,
           park_match: parkMatch,
           schedule_match: scheduleMatch,
@@ -951,7 +955,7 @@ export default function LogicPage() {
             Group Session Fit Finder
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-            Set target age range, park, day, and time. We score all players and rank best fits.
+            Set target age range, park, day, and time. Age is a hard gate: below min age or above max age = score 0.
           </Typography>
 
           <Box
@@ -1041,7 +1045,9 @@ export default function LogicPage() {
                         <Chip
                           size="small"
                           color={
-                            result.score >= 75
+                            result.age_excluded
+                              ? 'error'
+                              : result.score >= 75
                               ? 'success'
                               : result.score >= 50
                                 ? 'primary'
