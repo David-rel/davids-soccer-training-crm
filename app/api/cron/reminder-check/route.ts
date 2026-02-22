@@ -409,6 +409,17 @@ export async function POST(request: Request) {
 
 // Also support GET for easy manual testing in browser
 export async function GET(request: Request) {
+  const cronHeader = request.headers.get('x-vercel-cron');
+  if (cronHeader === '1') {
+    const cronRequest = new Request(request.url, {
+      method: 'POST',
+      headers: {
+        'x-vercel-cron': '1',
+      }
+    });
+    return POST(cronRequest);
+  }
+
   // For GET, require the secret in query params
   const url = new URL(request.url);
   const secret = url.searchParams.get('secret');

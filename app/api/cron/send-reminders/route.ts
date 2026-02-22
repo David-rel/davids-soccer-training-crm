@@ -873,6 +873,17 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const cronHeader = request.headers.get("x-vercel-cron");
+  if (cronHeader === "1") {
+    const cronRequest = new Request(request.url, {
+      method: "POST",
+      headers: {
+        "x-vercel-cron": "1",
+      },
+    });
+    return POST(cronRequest);
+  }
+
   const url = new URL(request.url);
   const secret = url.searchParams.get("secret");
 
