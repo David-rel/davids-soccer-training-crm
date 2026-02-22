@@ -116,6 +116,14 @@ function wrapMessage(coreMessage: string): string {
   return `${MESSAGE_PREFIX}\n${compactWhitespace(coreMessage)}\n${MESSAGE_SUFFIX}`;
 }
 
+function wrapMessageLines(lines: string[]): string {
+  const content = lines
+    .map((line) => compactWhitespace(line))
+    .filter(Boolean)
+    .join("\n");
+  return `${MESSAGE_PREFIX}\n${content}\n${MESSAGE_SUFFIX}`;
+}
+
 function wrapCoachMessage(coreMessage: string): string {
   return compactWhitespace(coreMessage);
 }
@@ -455,44 +463,34 @@ async function buildMessage(row: DueReminderRow): Promise<PreparedMessage | null
       if (!parentPhone) return null;
 
       const appContext = await fetchAppReminderContext(row.primary_crm_player_id);
-      let profileLine = profileUrl
-        ? `View profile + session plan: ${profileUrl}.`
-        : "Please check your player profile for session updates and plan.";
-
-      if (appContext) {
-        const basePlayerUrl = `https://app.davidssoccertraining.com/player/${encodeURIComponent(
-          appContext.appPlayerId
-        )}`;
-        const sessionsUrl = appContext.latestSessionId
+      const basePlayerUrl = appContext
+        ? `https://app.davidssoccertraining.com/player/${encodeURIComponent(appContext.appPlayerId)}`
+        : profileUrl;
+      const sessionPlanUrl = appContext
+        ? appContext.latestSessionId
           ? `${basePlayerUrl}#tab=sessions&sessionId=${encodeURIComponent(appContext.latestSessionId)}`
-          : `${basePlayerUrl}#tab=sessions`;
-        const testsTabUrl = `${basePlayerUrl}#tests`;
-        const feedbackUrl = appContext.latestFeedbackId
-          ? `${basePlayerUrl}#feedback:${encodeURIComponent(appContext.latestFeedbackId)}`
-          : `${basePlayerUrl}#feedback`;
-        const feedbackTitleLine = appContext.latestFeedbackTitle
-          ? `Latest feedback: ${appContext.latestFeedbackTitle}.`
-          : "Latest feedback is available.";
-        const feedbackBlurbLine = appContext.latestFeedbackBlurb
-          ? `Preview: ${appContext.latestFeedbackBlurb}`
-          : "";
-        const feedbackReadMoreLine = `Click the feedback link to read more: ${feedbackUrl}.`;
+          : `${basePlayerUrl}#tab=sessions`
+        : profileUrl;
 
-        profileLine = `Profile: ${basePlayerUrl}. Session plan: ${sessionsUrl}. Tests: ${testsTabUrl}. ${feedbackTitleLine} ${feedbackBlurbLine} ${feedbackReadMoreLine}`;
+      const lines = [
+        `Session time for ${playerLabel}.`,
+        basePlayerUrl
+          ? `Profile: ${basePlayerUrl}. Make sure to update profile picture, date of birth, primary/secondary position, and any other info.`
+          : "Profile: Ask Coach David for your player profile link. Make sure to update profile picture, date of birth, primary/secondary position, and any other info.",
+        sessionPlanUrl
+          ? `Session Plan: ${sessionPlanUrl}. Check it out to see what's happening.`
+          : "Session Plan: Check your player profile to see what's happening.",
+      ];
+
+      if (row.total_sessions_through_current === 1) {
+        lines.push(
+          "Since this is your first session, ask Coach David for your username and password to access the profile."
+        );
       }
-
-      const profileUpdateLine =
-        "If you haven't already, please update profile picture, date of birth, primary/secondary position, and any other profile info while you wait/watch.";
-      const firstSessionCredentialsLine =
-        row.total_sessions_through_current === 1
-          ? " Since this is your first session, ask Coach David for your username and password to access the profile."
-          : "";
 
       return {
         to: parentPhone,
-        body: wrapMessage(
-          `Session time is now for ${playerLabel}. ${profileLine} ${profileUpdateLine}${firstSessionCredentialsLine}`
-        ),
+        body: wrapMessageLines(lines),
       };
     }
     case "coach_session_start": {
