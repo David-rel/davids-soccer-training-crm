@@ -526,10 +526,30 @@ async function buildMessage(row: DueReminderRow): Promise<PreparedMessage | null
         : "Today's feedback and test updates from this session are being posted to the profile.";
 
       const links: string[] = [];
-      if (feedbackUrl) links.push(`Feedback: ${feedbackUrl}`);
-      if (testsUrl) links.push(`Tests: ${testsUrl}`);
-      if (!feedbackUrl && !testsUrl && profileUrl) {
-        links.push(`Profile: ${profileUrl}`);
+      const appContext = await fetchAppReminderContext(row.primary_crm_player_id);
+
+      if (appContext) {
+        const basePlayerUrl = `https://app.davidssoccertraining.com/player/${encodeURIComponent(
+          appContext.appPlayerId
+        )}`;
+        const sessionsUrl = appContext.latestSessionId
+          ? `${basePlayerUrl}#tab=sessions&sessionId=${encodeURIComponent(appContext.latestSessionId)}`
+          : `${basePlayerUrl}#tab=sessions`;
+        const testsTabUrl = `${basePlayerUrl}#tests`;
+        const feedbackTabUrl = appContext.latestFeedbackId
+          ? `${basePlayerUrl}#feedback:${encodeURIComponent(appContext.latestFeedbackId)}`
+          : `${basePlayerUrl}#feedback`;
+
+        links.push(`Profile: ${basePlayerUrl}`);
+        links.push(`Session: ${sessionsUrl}`);
+        links.push(`Tests: ${testsTabUrl}`);
+        links.push(`Feedback: ${feedbackTabUrl}`);
+      } else {
+        if (feedbackUrl) links.push(`Feedback: ${feedbackUrl}`);
+        if (testsUrl) links.push(`Tests: ${testsUrl}`);
+        if (!feedbackUrl && !testsUrl && profileUrl) {
+          links.push(`Profile: ${profileUrl}`);
+        }
       }
 
       const linksText = links.length ? ` ${links.join(" ")}` : "";
