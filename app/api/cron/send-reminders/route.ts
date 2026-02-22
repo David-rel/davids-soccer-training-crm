@@ -290,11 +290,13 @@ async function buildMessage(row: DueReminderRow): Promise<PreparedMessage | null
       const profileLine = profileUrl
         ? `View profile + session plan: ${profileUrl}.`
         : "Please check your player profile for session updates and plan.";
+      const profileUpdateLine =
+        "If you haven't already, please update profile picture, date of birth, primary/secondary position, and any other profile info while you wait/watch.";
 
       return {
         to: parentPhone,
         body: wrapMessage(
-          `Session time is now for ${playerLabel}. ${profileLine}`
+          `Session time is now for ${playerLabel}. ${profileLine} ${profileUpdateLine}`
         ),
       };
     }

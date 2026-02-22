@@ -23,6 +23,7 @@ import CardGiftcardIcon from '@mui/icons-material/CardGiftcard';
 import StarIcon from '@mui/icons-material/Star';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
+import PsychologyIcon from '@mui/icons-material/Psychology';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 
@@ -35,6 +36,7 @@ const navItems = [
   { label: 'Sessions', href: '/sessions', icon: <EventIcon /> },
   { label: 'Group Sessions', href: '/group-sessions', icon: <GroupsIcon /> },
   { label: 'Packages', href: '/packages', icon: <CardGiftcardIcon /> },
+  { label: 'Logic', href: '/logic', icon: <PsychologyIcon /> },
   { label: 'Finance Goals', href: '/finance-goals', icon: <AccountBalanceWalletIcon /> },
   { label: 'Expenses', href: '/expenses', icon: <ReceiptLongIcon /> },
 ];
