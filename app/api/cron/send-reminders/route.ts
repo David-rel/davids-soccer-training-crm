@@ -199,6 +199,40 @@ function formatReminderTime(dateValue: string | Date): string {
   return formatArizonaDateTime(date);
 }
 
+async function sendCoachDeliveryConfirmation(
+  row: DueReminderRow,
+  destination: string
+): Promise<{ ok: boolean; detail: string }> {
+  const coachPhone = getCoachPhoneNumber();
+  const dueAtArizona = formatInTimeZone(
+    normalizeUtcDate(row.due_at),
+    "America/Phoenix",
+    "yyyy-MM-dd h:mm a zzz"
+  );
+  const sentAtArizona = formatInTimeZone(
+    new Date(),
+    "America/Phoenix",
+    "yyyy-MM-dd h:mm a zzz"
+  );
+  const recipientLabel = toParentDisplayName(row);
+  const body = compactWhitespace(
+    `Auto reminder sent: ${row.reminder_type} to ${destination} (${recipientLabel}) due ${dueAtArizona}. Sent at ${sentAtArizona}.`
+  );
+
+  const notifyResult = await sendSmsViaTwilio(coachPhone, body);
+  if (!notifyResult.ok) {
+    return {
+      ok: false,
+      detail: `coach-notify-failed:${clip(notifyResult.error || "unknown", 250)}`,
+    };
+  }
+
+  return {
+    ok: true,
+    detail: `coach-notified:${notifyResult.sid || "ok"}`,
+  };
+}
+
 async function buildMessage(row: DueReminderRow): Promise<PreparedMessage | null> {
   if (!row.session_date) {
     return null;
@@ -475,11 +509,18 @@ async function processDueReminders(
       const smsResult = await sendSmsViaTwilio(destination, prepared.body);
 
       if (smsResult.ok) {
+        const noteParts = [`sms-sent:${smsResult.sid || "ok"}:${smsResult.status || "queued"}`];
+        try {
+          const coachNotify = await sendCoachDeliveryConfirmation(row, destination);
+          noteParts.push(coachNotify.detail);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Unknown coach notify exception";
+          noteParts.push(`coach-notify-exception:${clip(message, 250)}`);
+        }
+
         if (options.markSent) {
-          await markReminderSent(
-            row.id,
-            `sms-sent:${smsResult.sid || "ok"}:${smsResult.status || "queued"}`
-          );
+          await markReminderSent(row.id, noteParts.join(" | "));
         }
         stats.sent += 1;
       } else {
