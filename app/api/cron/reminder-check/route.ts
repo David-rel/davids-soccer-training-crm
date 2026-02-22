@@ -410,12 +410,21 @@ export async function POST(request: Request) {
 // Also support GET for easy manual testing in browser
 export async function GET(request: Request) {
   const cronHeader = request.headers.get('x-vercel-cron');
-  if (cronHeader === '1') {
+  const authHeader = request.headers.get('authorization');
+  const isManualWithSecret = authHeader === `Bearer ${process.env.CRON_SECRET}`;
+
+  if (cronHeader === '1' || isManualWithSecret) {
+    const headers = new Headers();
+    if (cronHeader === '1') {
+      headers.set('x-vercel-cron', '1');
+    }
+    if (isManualWithSecret && authHeader) {
+      headers.set('authorization', authHeader);
+    }
+
     const cronRequest = new Request(request.url, {
       method: 'POST',
-      headers: {
-        'x-vercel-cron': '1',
-      }
+      headers
     });
     return POST(cronRequest);
   }
