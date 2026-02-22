@@ -2,6 +2,29 @@ import { Pool } from "pg";
 
 // Lazy pool creation - only create when first used
 let pool: Pool | null = null;
+let loggedSslModeUpgrade = false;
+
+function normalizeDatabaseUrl(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    const sslMode = parsed.searchParams.get("sslmode");
+
+    if (sslMode && ["prefer", "require", "verify-ca"].includes(sslMode)) {
+      parsed.searchParams.set("sslmode", "verify-full");
+      if (!loggedSslModeUpgrade) {
+        console.log(
+          `Upgrading DATABASE_URL sslmode from "${sslMode}" to "verify-full" for secure pg defaults`
+        );
+        loggedSslModeUpgrade = true;
+      }
+    }
+
+    return parsed.toString();
+  } catch {
+    // If DATABASE_URL cannot be parsed as a URL, use it as-is.
+    return rawUrl;
+  }
+}
 
 function getPool() {
   if (!pool) {
@@ -9,7 +32,7 @@ function getPool() {
       throw new Error("DATABASE_URL is not set in environment variables");
     }
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString: normalizeDatabaseUrl(process.env.DATABASE_URL),
       max: 20,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
