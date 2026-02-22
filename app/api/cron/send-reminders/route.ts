@@ -65,6 +65,8 @@ interface AppReminderContext {
   appPlayerId: string;
   latestSessionId: string | null;
   latestFeedbackId: string | null;
+  latestFeedbackTitle: string | null;
+  latestFeedbackBlurb: string | null;
 }
 
 function normalizeUtcDate(dateValue: string | Date): Date {
@@ -97,6 +99,17 @@ function compactWhitespace(value: string): string {
 function clip(value: string, maxLength: number): string {
   if (value.length <= maxLength) return value;
   return `${value.slice(0, maxLength - 1)}...`;
+}
+
+function toPlainTextFromMarkdown(value: string): string {
+  return value
+    .replace(/!\[[^\]]*]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/[*_~>#-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function wrapMessage(coreMessage: string): string {
@@ -264,10 +277,12 @@ async function fetchAppReminderContext(
     );
 
     let latestFeedbackId: string | null = null;
+    let latestFeedbackTitle: string | null = null;
+    let latestFeedbackBlurb: string | null = null;
     if (tableStatus.hasPlayerFeedback) {
       const feedbackResult = await query(
         `
-          SELECT id::text AS id
+          SELECT id::text AS id, title, cleaned_markdown_content, raw_content
           FROM player_feedback
           WHERE player_id::text = $1::text
           ORDER BY updated_at DESC, created_at DESC
@@ -276,7 +291,23 @@ async function fetchAppReminderContext(
         [appPlayerId]
       );
 
-      latestFeedbackId = (feedbackResult.rows[0] as { id?: string } | undefined)?.id ?? null;
+      const feedbackRow = feedbackResult.rows[0] as
+        | {
+            id?: string;
+            title?: string | null;
+            cleaned_markdown_content?: string | null;
+            raw_content?: string | null;
+          }
+        | undefined;
+      latestFeedbackId = feedbackRow?.id ?? null;
+      latestFeedbackTitle = feedbackRow?.title?.trim() || null;
+      const feedbackContent =
+        feedbackRow?.cleaned_markdown_content?.trim() ||
+        feedbackRow?.raw_content?.trim() ||
+        "";
+      latestFeedbackBlurb = feedbackContent
+        ? clip(toPlainTextFromMarkdown(feedbackContent), 100)
+        : null;
     }
 
     const latestSessionId =
@@ -286,6 +317,8 @@ async function fetchAppReminderContext(
       appPlayerId,
       latestSessionId,
       latestFeedbackId,
+      latestFeedbackTitle,
+      latestFeedbackBlurb,
     };
   })();
 
@@ -437,8 +470,15 @@ async function buildMessage(row: DueReminderRow): Promise<PreparedMessage | null
         const feedbackUrl = appContext.latestFeedbackId
           ? `${basePlayerUrl}#feedback:${encodeURIComponent(appContext.latestFeedbackId)}`
           : `${basePlayerUrl}#feedback`;
+        const feedbackTitleLine = appContext.latestFeedbackTitle
+          ? `Latest feedback: ${appContext.latestFeedbackTitle}.`
+          : "Latest feedback is available.";
+        const feedbackBlurbLine = appContext.latestFeedbackBlurb
+          ? `Preview: ${appContext.latestFeedbackBlurb}`
+          : "";
+        const feedbackReadMoreLine = `Click the feedback link to read more: ${feedbackUrl}.`;
 
-        profileLine = `Profile: ${basePlayerUrl}. Session plan: ${sessionsUrl}. Tests: ${testsTabUrl}. Feedback: ${feedbackUrl}.`;
+        profileLine = `Profile: ${basePlayerUrl}. Session plan: ${sessionsUrl}. Tests: ${testsTabUrl}. ${feedbackTitleLine} ${feedbackBlurbLine} ${feedbackReadMoreLine}`;
       }
 
       const profileUpdateLine =
