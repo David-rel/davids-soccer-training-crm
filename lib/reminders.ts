@@ -43,6 +43,22 @@ function normalizeToArizonaLocalUtcDate(dateValue: string | Date): Date {
   return fromZonedTime(arizonaLocal, ARIZONA_TIMEZONE);
 }
 
+export const SESSION_REMINDER_INTERVALS = [
+  { type: "session_48h", offsetMinutes: -48 * 60 },
+  { type: "session_24h", offsetMinutes: -24 * 60 },
+  { type: "session_6h", offsetMinutes: -6 * 60 },
+  { type: "session_start", offsetMinutes: 0 },
+  { type: "coach_session_start", offsetMinutes: 0 },
+  { type: "coach_session_plus_60m", offsetMinutes: 60 },
+  { type: "parent_session_plus_120m", offsetMinutes: 120 },
+] as const;
+
+export const SESSION_REMINDER_TYPES = SESSION_REMINDER_INTERVALS.map(
+  (interval) => interval.type
+);
+
+export type SessionReminderType = (typeof SESSION_REMINDER_INTERVALS)[number]["type"];
+
 export async function createSessionReminders(
   parentId: number,
   sessionDate: string | Date,
@@ -51,22 +67,26 @@ export async function createSessionReminders(
   // Session times are stored as UTC-coded values. Keep reminder offsets in UTC math
   // so 48h/24h/6h always align with the actual session instant in production.
   const sessionDateUtc = normalizeToUtcDate(sessionDate);
-  const intervals = [
-    { type: "session_48h", hours: 48 },
-    { type: "session_24h", hours: 24 },
-    { type: "session_6h", hours: 6 },
-  ];
+  let createdCount = 0;
 
-  for (const interval of intervals) {
+  for (const interval of SESSION_REMINDER_INTERVALS) {
     const dueAtUtc = new Date(
-      sessionDateUtc.getTime() - interval.hours * 60 * 60 * 1000
+      sessionDateUtc.getTime() + interval.offsetMinutes * 60 * 1000
     );
-    // ALWAYS create reminders, even if in the past
-    // Use a unique constraint check to avoid duplicates
-    await query(
+
+    const insertResult = await query(
       `INSERT INTO crm_reminders (parent_id, first_session_id, session_id, reminder_type, reminder_category, due_at)
-       VALUES ($1, $2, $3, $4, 'session_reminder', $5)
-       ON CONFLICT DO NOTHING`,
+       SELECT $1::int, $2::int, $3::int, $4::text, 'session_reminder', ($5::timestamptz AT TIME ZONE 'UTC')
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM crm_reminders
+       WHERE parent_id = $1::int
+           AND first_session_id IS NOT DISTINCT FROM $2::int
+           AND session_id IS NOT DISTINCT FROM $3::int
+           AND reminder_type = $4::text
+           AND reminder_category = 'session_reminder'
+           AND due_at = ($5::timestamptz AT TIME ZONE 'UTC')
+       )`,
       [
         parentId,
         opts.firstSessionId || null,
@@ -75,7 +95,11 @@ export async function createSessionReminders(
         dueAtUtc.toISOString(),
       ]
     );
+
+    createdCount += insertResult.rowCount || 0;
   }
+
+  return createdCount;
 }
 
 export async function createFollowUpReminders(

@@ -6,6 +6,7 @@ import { getPool, query } from "../lib/db.js";
 import {
   createSessionReminders,
   createFollowUpReminders,
+  SESSION_REMINDER_TYPES,
 } from "../lib/reminders.js";
 
 async function backfillReminders() {
@@ -21,14 +22,18 @@ async function backfillReminders() {
         AND COALESCE(p.is_dead, false) = false
         AND fs.cancelled = false
         AND fs.session_date > NOW()
-        AND NOT EXISTS (
-          SELECT 1 FROM crm_reminders r
-          WHERE r.first_session_id = fs.id
-            AND r.reminder_category = 'session_reminder'
-            AND r.sent = false
+        AND EXISTS (
+          SELECT 1
+          FROM UNNEST($1::text[]) AS expected(reminder_type)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM crm_reminders r
+            WHERE r.first_session_id = fs.id
+              AND r.reminder_category = 'session_reminder'
+              AND r.reminder_type = expected.reminder_type
+          )
         )
       ORDER BY fs.session_date
-    `);
+    `, [SESSION_REMINDER_TYPES]);
 
     console.log(
       `Found ${firstSessions.rows.length} first sessions missing reminders`
@@ -51,14 +56,18 @@ async function backfillReminders() {
         AND COALESCE(p.is_dead, false) = false
         AND s.cancelled = false
         AND s.session_date > NOW()
-        AND NOT EXISTS (
-          SELECT 1 FROM crm_reminders r
-          WHERE r.session_id = s.id
-            AND r.reminder_category = 'session_reminder'
-            AND r.sent = false
+        AND EXISTS (
+          SELECT 1
+          FROM UNNEST($1::text[]) AS expected(reminder_type)
+          WHERE NOT EXISTS (
+            SELECT 1 FROM crm_reminders r
+            WHERE r.session_id = s.id
+              AND r.reminder_category = 'session_reminder'
+              AND r.reminder_type = expected.reminder_type
+          )
         )
       ORDER BY s.session_date
-    `);
+    `, [SESSION_REMINDER_TYPES]);
 
     console.log(
       `Found ${sessions.rows.length} regular sessions missing reminders`

@@ -11,7 +11,18 @@ export type PaymentMethod = 'zelle' | 'venmo' | 'paypal' | 'apple_cash' | 'cash'
 export type PackageType = '12_week_1x' | '12_week_2x' | '6_week_1x' | '6_week_2x';
 
 // Reminder types
-export type ReminderType = 'session_48h' | 'session_24h' | 'session_6h' | 'follow_up_1d' | 'follow_up_3d' | 'follow_up_7d' | 'follow_up_14d';
+export type ReminderType =
+  | 'session_48h'
+  | 'session_24h'
+  | 'session_6h'
+  | 'session_start'
+  | 'coach_session_start'
+  | 'coach_session_plus_60m'
+  | 'parent_session_plus_120m'
+  | 'follow_up_1d'
+  | 'follow_up_3d'
+  | 'follow_up_7d'
+  | 'follow_up_14d';
 
 // Reminder categories (which ghost scenario or session reminder)
 export type ReminderCategory = 'session_reminder' | 'dm_follow_up' | 'post_call_follow_up' | 'post_first_session_follow_up' | 'post_session_follow_up';

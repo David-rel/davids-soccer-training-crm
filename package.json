@@ -10,7 +10,8 @@
     "migrate": "tsx scripts/migrate.ts",
     "backup": "tsx scripts/backup.ts",
     "detect-cold": "tsx scripts/detect-cold-leads.ts",
-    "backfill-reminders": "tsx scripts/backfill-reminders.ts"
+    "backfill-reminders": "tsx scripts/backfill-reminders.ts",
+    "test-reminders": "tsx scripts/test-sms-reminders.ts"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

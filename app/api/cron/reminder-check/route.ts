@@ -1,6 +1,10 @@
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { query } from '@/lib/db';
-import { createSessionReminders, createFollowUpReminders } from '@/lib/reminders';
+import {
+  createSessionReminders,
+  createFollowUpReminders,
+  SESSION_REMINDER_TYPES,
+} from '@/lib/reminders';
 import { nowInArizona } from '@/lib/timezone';
 
 /**
@@ -10,7 +14,7 @@ import { nowInArizona } from '@/lib/timezone';
  * In UTC that is always 16:00 (Arizona is fixed at UTC-7).
  *
  * This job:
- * 1. Ensures all upcoming sessions have 48h, 24h, 6h reminders
+ * 1. Ensures all upcoming sessions have the full session reminder lifecycle
  * 2. Detects cold leads at various stages and creates follow-ups
  * 3. Cleans up old/stale reminders
  */
@@ -93,20 +97,25 @@ export async function POST(request: Request) {
       WHERE (fs.status IS NULL OR fs.status NOT IN ('cancelled', 'completed', 'no_show'))
         AND COALESCE(p.is_dead, false) = false
         AND fs.session_date > NOW()
-        AND NOT EXISTS (
-          SELECT 1 FROM crm_reminders r
-          WHERE r.first_session_id = fs.id
-            AND r.reminder_category = 'session_reminder'
-            AND r.sent = false
+        AND EXISTS (
+          SELECT 1
+          FROM UNNEST($1::text[]) AS expected(reminder_type)
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM crm_reminders r
+            WHERE r.first_session_id = fs.id
+              AND r.reminder_category = 'session_reminder'
+              AND r.reminder_type = expected.reminder_type
+          )
         )
       ORDER BY fs.session_date
-    `);
+    `, [SESSION_REMINDER_TYPES]);
 
     results.details.firstSessionsChecked = firstSessionsMissingReminders.rows.length;
 
     for (const fs of firstSessionsMissingReminders.rows) {
-      await createSessionReminders(fs.parent_id, fs.session_date, { firstSessionId: fs.id });
-      results.sessionRemindersCreated += 3; // 48h, 24h, 6h
+      const created = await createSessionReminders(fs.parent_id, fs.session_date, { firstSessionId: fs.id });
+      results.sessionRemindersCreated += created;
     }
 
     // Regular sessions missing reminders
@@ -117,20 +126,25 @@ export async function POST(request: Request) {
       WHERE (s.status IS NULL OR s.status NOT IN ('cancelled', 'completed', 'no_show'))
         AND COALESCE(p.is_dead, false) = false
         AND s.session_date > NOW()
-        AND NOT EXISTS (
-          SELECT 1 FROM crm_reminders r
-          WHERE r.session_id = s.id
-            AND r.reminder_category = 'session_reminder'
-            AND r.sent = false
+        AND EXISTS (
+          SELECT 1
+          FROM UNNEST($1::text[]) AS expected(reminder_type)
+          WHERE NOT EXISTS (
+            SELECT 1
+            FROM crm_reminders r
+            WHERE r.session_id = s.id
+              AND r.reminder_category = 'session_reminder'
+              AND r.reminder_type = expected.reminder_type
+          )
         )
       ORDER BY s.session_date
-    `);
+    `, [SESSION_REMINDER_TYPES]);
 
     results.details.sessionsChecked = sessionsMissingReminders.rows.length;
 
     for (const s of sessionsMissingReminders.rows) {
-      await createSessionReminders(s.parent_id, s.session_date, { sessionId: s.id });
-      results.sessionRemindersCreated += 3; // 48h, 24h, 6h
+      const created = await createSessionReminders(s.parent_id, s.session_date, { sessionId: s.id });
+      results.sessionRemindersCreated += created;
     }
 
     // ============================================
