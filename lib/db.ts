@@ -44,14 +44,20 @@ function getPool() {
 
     pool.on("error", (err) => {
       console.error("Unexpected error on idle client", err);
-      process.exit(-1);
+      // Do not kill the serverless process on transient idle disconnects.
+      // Reset the pool reference so the next query recreates a fresh pool.
+      const stalePool = pool;
+      pool = null;
+      void stalePool?.end().catch((closeError) => {
+        console.error("Error closing stale PostgreSQL pool", closeError);
+      });
     });
   }
   return pool;
 }
 
 // Helper function to query the database
-export async function query(text: string, params?: any[]) {
+export async function query(text: string, params?: unknown[]) {
   const start = Date.now();
   try {
     const pool = getPool();
