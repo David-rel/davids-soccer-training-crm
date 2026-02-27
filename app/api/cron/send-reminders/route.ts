@@ -9,6 +9,8 @@ import {
 import { formatInTimeZone } from "date-fns-tz";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+export const preferredRegion = "iad1";
 
 const MESSAGE_PREFIX = "Davids Soccer Training. DO NOT REPLY";
 const MESSAGE_SUFFIX =

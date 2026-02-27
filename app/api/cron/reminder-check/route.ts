@@ -60,6 +60,8 @@ const COLD_LEAD_THRESHOLDS = [
 ];
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+export const preferredRegion = 'iad1';
 
 export async function POST(request: Request) {
   try {

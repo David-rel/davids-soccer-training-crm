@@ -17,20 +17,39 @@ function parseBoundedInt(
   return Math.max(min, Math.min(max, intValue));
 }
 
-const DB_POOL_MAX = parseBoundedInt(process.env.DB_POOL_MAX, 5, 1, 50);
+const DB_POOL_MAX = parseBoundedInt(process.env.DB_POOL_MAX, 2, 1, 50);
 const DB_IDLE_TIMEOUT_MS = parseBoundedInt(
   process.env.DB_POOL_IDLE_TIMEOUT_MS,
-  30000,
+  10000,
   1000,
   10 * 60 * 1000
 );
 const DB_CONNECT_TIMEOUT_MS = parseBoundedInt(
   process.env.DB_CONNECT_TIMEOUT_MS,
-  10000,
+  30000,
   1000,
   120000
 );
-const DB_QUERY_RETRIES = parseBoundedInt(process.env.DB_QUERY_RETRIES, 2, 0, 5);
+const DB_QUERY_RETRIES = parseBoundedInt(process.env.DB_QUERY_RETRIES, 4, 0, 8);
+const DB_IP_FAMILY = parseBoundedInt(process.env.DB_IP_FAMILY, 4, 0, 6);
+
+function getConnectionTelemetry(connectionString: string): {
+  host?: string;
+  database?: string;
+  sslMode?: string;
+} {
+  try {
+    const parsed = new URL(connectionString);
+    const database = parsed.pathname?.replace(/^\//, "") || undefined;
+    return {
+      host: parsed.hostname || undefined,
+      database,
+      sslMode: parsed.searchParams.get("sslmode") || undefined,
+    };
+  } catch {
+    return {};
+  }
+}
 
 function normalizeDatabaseUrl(rawUrl: string): string {
   try {
@@ -152,14 +171,21 @@ function getPool() {
       idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
       connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
       keepAlive: true,
+      allowExitOnIdle: true,
+      family: DB_IP_FAMILY,
     });
 
     if (!loggedDbConfig) {
+      const telemetry = getConnectionTelemetry(process.env.DATABASE_URL);
       console.log("Initialized PostgreSQL pool", {
         max: DB_POOL_MAX,
         idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
         connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
         queryRetries: DB_QUERY_RETRIES,
+        ipFamily: DB_IP_FAMILY,
+        host: telemetry.host,
+        database: telemetry.database,
+        sslMode: telemetry.sslMode,
       });
       loggedDbConfig = true;
     }
