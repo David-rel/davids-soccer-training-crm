@@ -31,7 +31,6 @@ const DB_CONNECT_TIMEOUT_MS = parseBoundedInt(
   120000
 );
 const DB_QUERY_RETRIES = parseBoundedInt(process.env.DB_QUERY_RETRIES, 4, 0, 8);
-const DB_IP_FAMILY = parseBoundedInt(process.env.DB_IP_FAMILY, 4, 0, 6);
 
 function getConnectionTelemetry(connectionString: string): {
   host?: string;
@@ -172,7 +171,6 @@ function getPool() {
       connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
       keepAlive: true,
       allowExitOnIdle: true,
-      family: DB_IP_FAMILY,
     });
 
     if (!loggedDbConfig) {
@@ -182,7 +180,6 @@ function getPool() {
         idleTimeoutMillis: DB_IDLE_TIMEOUT_MS,
         connectionTimeoutMillis: DB_CONNECT_TIMEOUT_MS,
         queryRetries: DB_QUERY_RETRIES,
-        ipFamily: DB_IP_FAMILY,
         host: telemetry.host,
         database: telemetry.database,
         sslMode: telemetry.sslMode,
