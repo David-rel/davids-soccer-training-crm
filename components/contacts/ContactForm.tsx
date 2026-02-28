@@ -17,12 +17,13 @@ import type { CallOutcome, DMStatus, Gender } from '@/lib/types';
 interface PlayerInput {
   name: string;
   age: string;
+  birthday: string;
   team: string;
   gender: Gender | '';
   notes: string;
 }
 
-const emptyPlayer: PlayerInput = { name: '', age: '', team: '', gender: '', notes: '' };
+const emptyPlayer: PlayerInput = { name: '', age: '', birthday: '', team: '', gender: '', notes: '' };
 
 const dmStatusOptions: { value: DMStatus; label: string }[] = [
   { value: 'first_message', label: 'First Message' },
@@ -84,6 +85,7 @@ export default function ContactForm() {
             .map((p) => ({
               name: p.name.trim(),
               age: p.age ? parseInt(p.age) : null,
+              birthday: p.birthday || null,
               team: p.team.trim() || null,
               gender: p.gender || null,
               notes: p.notes.trim() || null,
@@ -194,6 +196,15 @@ export default function ContactForm() {
               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
                 <TextField label="Player Name" value={player.name} onChange={(e) => updatePlayer(index, 'name', e.target.value)} size="small" fullWidth />
                 <TextField label="Age" value={player.age} onChange={(e) => updatePlayer(index, 'age', e.target.value)} type="number" size="small" fullWidth />
+                <TextField
+                  label="Birthday"
+                  value={player.birthday}
+                  onChange={(e) => updatePlayer(index, 'birthday', e.target.value)}
+                  type="date"
+                  size="small"
+                  fullWidth
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
                 <TextField label="Team" value={player.team} onChange={(e) => updatePlayer(index, 'team', e.target.value)} size="small" fullWidth />
                 <TextField label="Gender" value={player.gender} onChange={(e) => updatePlayer(index, 'gender', e.target.value)} select size="small" fullWidth>
                   <MenuItem value="">--</MenuItem>

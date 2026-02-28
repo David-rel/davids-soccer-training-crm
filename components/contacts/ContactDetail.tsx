@@ -55,6 +55,17 @@ const reminderTypeLabels: Record<string, string> = {
 
 type EditableParentField = 'name' | 'secondary_parent_name' | 'phone' | 'email' | 'instagram_link' | 'notes';
 
+function normalizeBirthdayInput(value: string | null | undefined): string {
+  return value ? String(value).slice(0, 10) : '';
+}
+
+function formatBirthdayDisplay(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const parts = String(value).slice(0, 10).split('-');
+  if (parts.length !== 3) return String(value).slice(0, 10);
+  return `${parts[1]}/${parts[2]}/${parts[0]}`;
+}
+
 export default function ContactDetail({ id }: { id: string }) {
   const router = useRouter();
   const [parent, setParent] = useState<ParentDetail | null>(null);
@@ -64,7 +75,7 @@ export default function ContactDetail({ id }: { id: string }) {
   const [savingField, setSavingField] = useState<string | null>(null);
   const [playerDialogOpen, setPlayerDialogOpen] = useState(false);
   const [editingPlayer, setEditingPlayer] = useState<Player | null>(null);
-  const [newPlayer, setNewPlayer] = useState({ name: '', age: '', team: '', gender: '' as Gender | '', notes: '' });
+  const [newPlayer, setNewPlayer] = useState({ name: '', age: '', birthday: '', team: '', gender: '' as Gender | '', notes: '' });
   const [firstSessionForm, setFirstSessionForm] = useState({
     player_ids: [] as string[],
     session_date: '',
@@ -127,7 +138,7 @@ export default function ContactDetail({ id }: { id: string }) {
 
   const openAddPlayerDialog = () => {
     setEditingPlayer(null);
-    setNewPlayer({ name: '', age: '', team: '', gender: '', notes: '' });
+    setNewPlayer({ name: '', age: '', birthday: '', team: '', gender: '', notes: '' });
     setPlayerDialogOpen(true);
   };
 
@@ -136,6 +147,7 @@ export default function ContactDetail({ id }: { id: string }) {
     setNewPlayer({
       name: player.name,
       age: player.age != null ? String(player.age) : '',
+      birthday: normalizeBirthdayInput(player.birthday),
       team: player.team ?? '',
       gender: player.gender ?? '',
       notes: player.notes ?? '',
@@ -152,6 +164,7 @@ export default function ContactDetail({ id }: { id: string }) {
         body: JSON.stringify({
           name: newPlayer.name.trim(),
           age: newPlayer.age ? parseInt(newPlayer.age) : null,
+          birthday: newPlayer.birthday || null,
           team: newPlayer.team.trim() || null,
           gender: newPlayer.gender || null,
           notes: newPlayer.notes.trim() || null,
@@ -164,13 +177,14 @@ export default function ContactDetail({ id }: { id: string }) {
         body: JSON.stringify({
           name: newPlayer.name.trim(),
           age: newPlayer.age ? parseInt(newPlayer.age) : null,
+          birthday: newPlayer.birthday || null,
           team: newPlayer.team.trim() || null,
           gender: newPlayer.gender || null,
           notes: newPlayer.notes.trim() || null,
         }),
       });
     }
-    setNewPlayer({ name: '', age: '', team: '', gender: '', notes: '' });
+    setNewPlayer({ name: '', age: '', birthday: '', team: '', gender: '', notes: '' });
     setEditingPlayer(null);
     setPlayerDialogOpen(false);
     fetchParent();
@@ -528,7 +542,7 @@ export default function ContactDetail({ id }: { id: string }) {
                 <Box>
                   <Typography sx={{ fontWeight: 600 }}>{player.name}</Typography>
                   <Typography variant="body2" color="text.secondary">
-                    {[player.age && `Age ${player.age}`, player.team, player.gender].filter(Boolean).join(' · ')}
+                    {[player.age && `Age ${player.age}`, formatBirthdayDisplay(player.birthday) && `Birthday ${formatBirthdayDisplay(player.birthday)}`, player.team, player.gender].filter(Boolean).join(' · ')}
                   </Typography>
                   {player.notes && (
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>{player.notes}</Typography>
@@ -758,6 +772,14 @@ export default function ContactDetail({ id }: { id: string }) {
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mt: 1 }}>
             <TextField label="Name *" value={newPlayer.name} onChange={(e) => setNewPlayer({ ...newPlayer, name: e.target.value })} fullWidth />
             <TextField label="Age" value={newPlayer.age} onChange={(e) => setNewPlayer({ ...newPlayer, age: e.target.value })} type="number" fullWidth />
+            <TextField
+              label="Birthday"
+              value={newPlayer.birthday}
+              onChange={(e) => setNewPlayer({ ...newPlayer, birthday: e.target.value })}
+              type="date"
+              fullWidth
+              slotProps={{ inputLabel: { shrink: true } }}
+            />
             <TextField label="Team" value={newPlayer.team} onChange={(e) => setNewPlayer({ ...newPlayer, team: e.target.value })} fullWidth />
             <TextField label="Gender" value={newPlayer.gender} onChange={(e) => setNewPlayer({ ...newPlayer, gender: e.target.value as Gender })} select fullWidth>
               <MenuItem value="">--</MenuItem>

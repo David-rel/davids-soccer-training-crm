@@ -15,6 +15,23 @@ function normalizeRequiredText(value: unknown): string | null {
   return normalized && normalized.length > 0 ? normalized : null;
 }
 
+function normalizeOptionalAge(value: unknown): number | null | undefined {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) return undefined;
+  return parsed;
+}
+
+function normalizeOptionalBirthday(value: unknown): string | null | undefined {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return undefined;
+  return raw;
+}
+
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -37,6 +54,22 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       if (!lastName) return errorResponse('Last name is required', 400);
       fields.push(`last_name = $${paramIndex++}`);
       values.push(lastName);
+    }
+
+    if ('age' in body) {
+      const age = normalizeOptionalAge(body.age);
+      if (age === undefined) return errorResponse('Age must be a whole number', 400);
+      fields.push(`age = $${paramIndex++}`);
+      values.push(age);
+    }
+
+    if ('birthday' in body) {
+      const birthday = normalizeOptionalBirthday(body.birthday);
+      if (birthday === undefined) {
+        return errorResponse('Birthday must be in YYYY-MM-DD format', 400);
+      }
+      fields.push(`birthday = $${paramIndex++}`);
+      values.push(birthday);
     }
 
     if ('emergency_contact' in body) {

@@ -29,17 +29,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     const body = await request.json();
-    const { name, age, team, gender, notes } = body;
+    const { name, age, birthday, team, gender, notes } = body;
 
     if (!name) {
       return errorResponse('Player name is required', 400);
     }
 
     const result = await query(
-      `INSERT INTO crm_players (parent_id, name, age, team, gender, notes)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO crm_players (parent_id, name, age, birthday, team, gender, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [id, name, age || null, team || null, gender || null, notes || null]
+      [id, name, age || null, birthday || null, team || null, gender || null, notes || null]
     );
 
     return jsonResponse(result.rows[0], 201);

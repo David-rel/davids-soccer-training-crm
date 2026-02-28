@@ -1,5 +1,10 @@
 import { query } from "@/lib/db";
 import { errorResponse, jsonResponse } from "@/lib/api-helpers";
+import {
+  ensureAutoRemindersSchema,
+  getSessionReminderDefaultsMap,
+  ReminderDefaultRow,
+} from "@/lib/auto-reminders";
 import { formatArizonaDateTime, getDateBoundsArizona } from "@/lib/timezone";
 import {
   getCoachPhoneNumber,
@@ -23,6 +28,7 @@ interface DueReminderRow {
   first_session_id: number | null;
   reminder_type: string;
   due_at: string | Date;
+  custom_message: string | null;
   parent_name: string;
   secondary_parent_name: string | null;
   parent_phone: string | null;
@@ -71,6 +77,30 @@ interface AppReminderContext {
   latestFeedbackBlurb: string | null;
 }
 
+interface CustomScheduledMessageRow {
+  id: number;
+  parent_id: number;
+  title: string | null;
+  message_content: string;
+  scheduled_for: string | Date;
+  parent_name: string;
+  secondary_parent_name: string | null;
+  parent_phone: string | null;
+}
+
+interface CustomMessageStats {
+  fetched: number;
+  sent: number;
+  skipped: number;
+  failed: number;
+  previewed: number;
+  preview: Array<{
+    id: number;
+    dueAt: string;
+    to: string;
+  }>;
+}
+
 function normalizeUtcDate(dateValue: string | Date): Date {
   if (dateValue instanceof Date) {
     return new Date(
@@ -114,6 +144,26 @@ function toPlainTextFromMarkdown(value: string): string {
     .trim();
 }
 
+function renderTemplate(
+  template: string,
+  variables: Record<string, string>
+): string {
+  return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_full, key: string) => {
+    return Object.prototype.hasOwnProperty.call(variables, key)
+      ? variables[key] || ""
+      : "";
+  });
+}
+
+function normalizeTemplateOutput(value: string): string {
+  return value
+    .split("\n")
+    .map((line) => compactWhitespace(line))
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
 function wrapMessage(coreMessage: string): string {
   return `${MESSAGE_PREFIX}\n${compactWhitespace(coreMessage)}\n${MESSAGE_SUFFIX}`;
 }
@@ -138,11 +188,18 @@ function toPlayerLabel(playerNames: string[] | null): string {
   return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
 }
 
-function toParentDisplayName(row: DueReminderRow): string {
-  if (row.secondary_parent_name && row.secondary_parent_name.trim()) {
-    return `${row.parent_name} and ${row.secondary_parent_name.trim()}`;
+function toCombinedParentDisplayName(
+  parentName: string,
+  secondaryParentName: string | null
+): string {
+  if (secondaryParentName && secondaryParentName.trim()) {
+    return `${parentName} and ${secondaryParentName.trim()}`;
   }
-  return row.parent_name;
+  return parentName;
+}
+
+function toParentDisplayName(row: DueReminderRow): string {
+  return toCombinedParentDisplayName(row.parent_name, row.secondary_parent_name);
 }
 
 function templateUrl(
@@ -410,7 +467,10 @@ async function sendCoachDeliveryConfirmation(
   };
 }
 
-async function buildMessage(row: DueReminderRow): Promise<PreparedMessage | null> {
+async function buildMessage(
+  row: DueReminderRow,
+  defaultsMap: Record<string, ReminderDefaultRow>
+): Promise<PreparedMessage | null> {
   if (!row.session_date) {
     return null;
   }
@@ -439,6 +499,83 @@ async function buildMessage(row: DueReminderRow): Promise<PreparedMessage | null
     sessionId: row.session_id ? String(row.session_id) : "",
     firstSessionId: row.first_session_id ? String(row.first_session_id) : "",
   });
+
+  const templateOverride = (row.custom_message || "").trim();
+  const templateDefault =
+    defaultsMap[row.reminder_type]?.is_active !== false
+      ? (defaultsMap[row.reminder_type]?.message_template || "").trim()
+      : "";
+  const templateToUse = templateOverride || templateDefault;
+
+  if (templateToUse) {
+    const needsCoachRecipient = row.reminder_type.startsWith("coach_");
+    const destination = needsCoachRecipient
+      ? getCoachPhoneNumber()
+      : normalizeUsPhoneNumber(row.parent_phone);
+    if (!destination) return null;
+
+    const includesAppLinks =
+      /\{\{\s*(profile_url|session_plan_url|feedback_url|tests_url|player_profile_url|player_sessions_url|player_feedback_url|player_tests_url)\s*\}\}/.test(
+        templateToUse
+      );
+    const appContext = includesAppLinks
+      ? await fetchAppReminderContext(row.primary_crm_player_id)
+      : null;
+    const basePlayerUrl = appContext
+      ? `https://app.davidssoccertraining.com/player/${encodeURIComponent(appContext.appPlayerId)}`
+      : profileUrl;
+    const sessionPlanUrl = appContext
+      ? appContext.latestSessionId
+        ? `${basePlayerUrl}#tab=sessions&sessionId=${encodeURIComponent(appContext.latestSessionId)}`
+        : `${basePlayerUrl}#tab=sessions`
+      : profileUrl;
+    const feedbackTabUrl = appContext
+      ? appContext.latestFeedbackId
+        ? `${basePlayerUrl}#feedback:${encodeURIComponent(appContext.latestFeedbackId)}`
+        : `${basePlayerUrl}#feedback`
+      : feedbackUrl;
+    const testsTabUrl = appContext ? `${basePlayerUrl}#tests` : testsUrl;
+
+    const notes = await getSameDayNotes(row.parent_id, sessionDate);
+    const notesSummary = notes.length
+      ? clip(notes.join(" | "), 220)
+      : "Today's feedback and test updates from this session are being posted to the profile.";
+    const firstSessionNote =
+      row.total_sessions_through_current === 1
+        ? "Since this is your first session, ask Coach David for your username and password to access the profile."
+        : "";
+    const reviewPrompt =
+      row.total_sessions_through_current === 3
+        ? "This is session #3, ask for a review and capture quick feedback."
+        : "";
+
+    const rendered = normalizeTemplateOutput(
+      renderTemplate(templateToUse, {
+        reminder_type: row.reminder_type,
+        player_name: playerLabel,
+        parent_name: parentDisplay,
+        session_time: sessionTimeText,
+        date_key: dateKey,
+        profile_url: basePlayerUrl || profileUrl || "",
+        session_plan_url: sessionPlanUrl || profileUrl || "",
+        feedback_url: feedbackTabUrl || feedbackUrl || "",
+        tests_url: testsTabUrl || testsUrl || "",
+        notes_summary: notesSummary,
+        first_session_note: firstSessionNote,
+        review_prompt: reviewPrompt,
+        coach_phone: getCoachPhoneNumber(),
+      })
+    );
+
+    if (!rendered) return null;
+
+    return {
+      to: destination,
+      body: needsCoachRecipient
+        ? wrapCoachMessage(rendered.replace(/\n+/g, " "))
+        : wrapMessageLines(rendered.split("\n")),
+    };
+  }
 
   switch (row.reminder_type) {
     case "session_48h":
@@ -592,10 +729,155 @@ async function appendReminderNote(reminderId: number, note: string) {
   );
 }
 
+async function markCustomMessageSent(messageId: number, note: string) {
+  await query(
+    `UPDATE crm_custom_scheduled_messages
+     SET sent = true,
+         sent_at = CURRENT_TIMESTAMP,
+         notes = CASE
+           WHEN notes IS NULL OR notes = '' THEN $2
+           ELSE notes || E'\n' || $2
+         END,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [messageId, note]
+  );
+}
+
+async function appendCustomMessageNote(messageId: number, note: string) {
+  await query(
+    `UPDATE crm_custom_scheduled_messages
+     SET notes = CASE
+       WHEN notes IS NULL OR notes = '' THEN $2
+       ELSE notes || E'\n' || $2
+     END,
+     updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [messageId, note]
+  );
+}
+
+async function processDueCustomMessages(
+  limit: number,
+  options: ReminderProcessingOptions
+): Promise<CustomMessageStats> {
+  const dueMessages = await query(
+    `
+      SELECT
+        m.id,
+        m.parent_id,
+        m.title,
+        m.message_content,
+        m.scheduled_for,
+        p.name as parent_name,
+        p.secondary_parent_name,
+        p.phone as parent_phone
+      FROM crm_custom_scheduled_messages m
+      JOIN crm_parents p ON p.id = m.parent_id
+      WHERE m.sent = false
+        AND m.scheduled_for >= ($2::timestamptz AT TIME ZONE 'UTC')
+        AND m.scheduled_for <= ($3::timestamptz AT TIME ZONE 'UTC')
+        AND ($4::int IS NULL OR m.parent_id = $4::int)
+        AND COALESCE(p.is_dead, false) = false
+      ORDER BY m.scheduled_for ASC, m.id ASC
+      LIMIT $1
+    `,
+    [limit, options.lowerBoundIso, options.upperBoundIso, options.parentId]
+  );
+
+  const stats: CustomMessageStats = {
+    fetched: dueMessages.rows.length,
+    sent: 0,
+    skipped: 0,
+    failed: 0,
+    previewed: 0,
+    preview: [],
+  };
+
+  for (const row of dueMessages.rows as CustomScheduledMessageRow[]) {
+    const parentPhone = normalizeUsPhoneNumber(row.parent_phone);
+    if (!parentPhone) {
+      if (!options.dryRun && options.markSent) {
+        await markCustomMessageSent(
+          row.id,
+          "auto-skipped: missing recipient phone number"
+        );
+      }
+      stats.skipped += 1;
+      continue;
+    }
+
+    const parentDisplay = toCombinedParentDisplayName(
+      row.parent_name,
+      row.secondary_parent_name
+    );
+    const scheduledForText = formatArizonaDateTime(normalizeUtcDate(row.scheduled_for));
+    const rendered = normalizeTemplateOutput(
+      renderTemplate(row.message_content, {
+        parent_name: parentDisplay,
+        scheduled_time: scheduledForText,
+        coach_phone: getCoachPhoneNumber(),
+      })
+    );
+    if (!rendered) {
+      if (!options.dryRun && options.markSent) {
+        await markCustomMessageSent(row.id, "auto-skipped: empty message content");
+      }
+      stats.skipped += 1;
+      continue;
+    }
+
+    const destination = options.overrideTo || parentPhone;
+    const body = wrapMessage(rendered);
+
+    if (options.dryRun) {
+      stats.previewed += 1;
+      if (stats.preview.length < 25) {
+        stats.preview.push({
+          id: row.id,
+          dueAt: normalizeUtcDate(row.scheduled_for).toISOString(),
+          to: destination,
+        });
+      }
+      continue;
+    }
+
+    try {
+      const smsResult = await sendSmsViaTwilio(destination, body);
+
+      if (smsResult.ok) {
+        const detail = `sms-sent:${smsResult.sid || "ok"}:${smsResult.status || "queued"}`;
+        if (options.markSent) {
+          await markCustomMessageSent(row.id, detail);
+        }
+        stats.sent += 1;
+      } else {
+        if (options.markSent) {
+          await appendCustomMessageNote(
+            row.id,
+            `sms-failed:${clip(smsResult.error || "unknown", 300)}`
+          );
+        }
+        stats.failed += 1;
+      }
+    } catch (error) {
+      if (options.markSent) {
+        const message =
+          error instanceof Error ? error.message : "Unknown SMS send exception";
+        await appendCustomMessageNote(row.id, `sms-exception:${clip(message, 300)}`);
+      }
+      stats.failed += 1;
+    }
+  }
+
+  return stats;
+}
+
 async function processDueReminders(
   limit: number,
   options: ReminderProcessingOptions
 ): Promise<ReminderStats> {
+  const defaultsMap = await getSessionReminderDefaultsMap();
   const dueReminders = await query(
     `SELECT
       r.id,
@@ -604,6 +886,7 @@ async function processDueReminders(
       r.first_session_id,
       r.reminder_type,
       r.due_at,
+      r.custom_message,
       p.name as parent_name,
       p.secondary_parent_name,
       p.phone as parent_phone,
@@ -715,7 +998,7 @@ async function processDueReminders(
   };
 
   for (const row of dueReminders.rows as DueReminderRow[]) {
-    const prepared = await buildMessage(row);
+    const prepared = await buildMessage(row, defaultsMap);
 
     if (!prepared) {
       if (!options.dryRun && options.markSent) {
@@ -785,6 +1068,7 @@ async function processDueReminders(
 
 export async function POST(request: Request) {
   try {
+    await ensureAutoRemindersSchema();
     const cronHeader = request.headers.get("x-vercel-cron");
     const authHeader = request.headers.get("authorization");
     const url = new URL(request.url);
@@ -842,6 +1126,13 @@ export async function POST(request: Request) {
     const sessionId = parseOptionalInt(url.searchParams.get("session_id"));
     const firstSessionId = parseOptionalInt(url.searchParams.get("first_session_id"));
     const reminderTypes = parseReminderTypes(url.searchParams.get("types"));
+    const includeCustomMessagesParam = url.searchParams.get(
+      "include_custom_messages"
+    );
+    const includeCustomMessages =
+      includeCustomMessagesParam === null
+        ? true
+        : includeCustomMessagesParam === "1";
 
     if (testMode && !overrideTo) {
       return errorResponse("Invalid test_to phone number", 400);
@@ -866,6 +1157,19 @@ export async function POST(request: Request) {
       firstSessionId,
       reminderTypes,
     });
+    const customMessageStats = includeCustomMessages
+      ? await processDueCustomMessages(batchSize, {
+          lowerBoundIso,
+          upperBoundIso,
+          dryRun,
+          markSent,
+          overrideTo,
+          parentId,
+          sessionId,
+          firstSessionId,
+          reminderTypes,
+        })
+      : null;
 
     return jsonResponse({
       success: true,
@@ -884,7 +1188,9 @@ export async function POST(request: Request) {
       sessionId,
       firstSessionId,
       reminderTypes,
+      includeCustomMessages,
       stats,
+      customMessageStats,
     });
   } catch (error) {
     console.error("Error in send reminders cron:", error);

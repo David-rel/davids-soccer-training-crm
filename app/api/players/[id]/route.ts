@@ -13,7 +13,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const values: unknown[] = [];
     let paramIndex = 1;
 
-    const allowedFields = ['name', 'age', 'team', 'gender', 'notes'];
+    const allowedFields = ['name', 'age', 'birthday', 'team', 'gender', 'notes'];
 
     for (const field of allowedFields) {
       if (field in body) {

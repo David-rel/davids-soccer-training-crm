@@ -166,9 +166,17 @@ export async function POST(request: NextRequest) {
     if (players && players.length > 0) {
       for (const player of players) {
         await query(
-          `INSERT INTO crm_players (parent_id, name, age, team, gender, notes)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [parent.id, player.name, player.age || null, player.team || null, player.gender || null, player.notes || null]
+          `INSERT INTO crm_players (parent_id, name, age, birthday, team, gender, notes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            parent.id,
+            player.name,
+            player.age || null,
+            player.birthday || null,
+            player.team || null,
+            player.gender || null,
+            player.notes || null,
+          ]
         );
       }
     }

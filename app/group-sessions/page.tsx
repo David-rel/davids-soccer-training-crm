@@ -55,6 +55,8 @@ interface PlayerSignup {
   group_session_id: number;
   first_name: string;
   last_name: string;
+  age: number | null;
+  birthday: string | null;
   emergency_contact: string;
   contact_phone: string | null;
   contact_email: string;
@@ -85,6 +87,8 @@ interface SessionFormState {
 interface PlayerFormState {
   first_name: string;
   last_name: string;
+  age: string;
+  birthday: string;
   emergency_contact: string;
   contact_phone: string;
   contact_email: string;
@@ -128,6 +132,8 @@ const emptySessionForm: SessionFormState = {
 const emptyPlayerForm: PlayerFormState = {
   first_name: '',
   last_name: '',
+  age: '',
+  birthday: '',
   emergency_contact: '',
   contact_phone: '',
   contact_email: '',
@@ -148,6 +154,17 @@ const emptyQuickAddForm: QuickAddFormState = {
   location: '',
   image_url: '',
 };
+
+function normalizeBirthdayInput(value: string | null | undefined): string {
+  return value ? String(value).slice(0, 10) : '';
+}
+
+function formatBirthdayDisplay(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const [year, month, day] = String(value).slice(0, 10).split('-');
+  if (!year || !month || !day) return String(value).slice(0, 10);
+  return `${month}/${day}/${year}`;
+}
 
 export default function GroupSessionsPage() {
   const [sessions, setSessions] = useState<GroupSession[]>([]);
@@ -468,6 +485,8 @@ export default function GroupSessionsPage() {
     setPlayerForm({
       first_name: player.first_name,
       last_name: player.last_name,
+      age: player.age != null ? String(player.age) : '',
+      birthday: normalizeBirthdayInput(player.birthday),
       emergency_contact: player.emergency_contact,
       contact_phone: player.contact_phone || '',
       contact_email: player.contact_email || '',
@@ -502,6 +521,8 @@ export default function GroupSessionsPage() {
       const payload = {
         first_name: playerForm.first_name.trim(),
         last_name: playerForm.last_name.trim(),
+        age: playerForm.age.trim() === '' ? null : Number(playerForm.age),
+        birthday: playerForm.birthday || null,
         emergency_contact: playerForm.emergency_contact.trim(),
         contact_phone: playerForm.contact_phone.trim() || null,
         contact_email: playerForm.contact_email.trim(),
@@ -612,7 +633,12 @@ export default function GroupSessionsPage() {
                 </Typography>
               </TableCell>
               <TableCell>
-                {[player.team && `Team: ${player.team}`, player.foot && `Foot: ${player.foot}`]
+                {[
+                  formatBirthdayDisplay(player.birthday) &&
+                    `Birthday: ${formatBirthdayDisplay(player.birthday)}`,
+                  player.team && `Team: ${player.team}`,
+                  player.foot && `Foot: ${player.foot}`,
+                ]
                   .filter(Boolean)
                   .join(' · ') || '—'}
               </TableCell>
@@ -1165,6 +1191,23 @@ export default function GroupSessionsPage() {
               onChange={(e) => setPlayerForm((prev) => ({ ...prev, last_name: e.target.value }))}
               fullWidth
               required
+            />
+            <TextField
+              label="Age"
+              type="number"
+              value={playerForm.age}
+              onChange={(e) => setPlayerForm((prev) => ({ ...prev, age: e.target.value }))}
+              fullWidth
+            />
+            <TextField
+              label="Birthday"
+              type="date"
+              value={playerForm.birthday}
+              onChange={(e) =>
+                setPlayerForm((prev) => ({ ...prev, birthday: e.target.value }))
+              }
+              fullWidth
+              slotProps={{ inputLabel: { shrink: true } }}
             />
             <TextField
               label="Emergency Contact *"

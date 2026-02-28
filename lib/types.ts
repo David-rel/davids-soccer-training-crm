@@ -55,6 +55,7 @@ export interface Player {
   parent_id: number;
   name: string;
   age: number | null;
+  birthday: string | null;
   team: string | null;
   gender: Gender | null;
   notes: string | null;
@@ -162,6 +163,8 @@ export interface PlayerSignup {
   group_session_id: number;
   first_name: string;
   last_name: string;
+  age: number | null;
+  birthday: string | null;
   emergency_contact: string;
   contact_phone: string | null;
   contact_email: string;

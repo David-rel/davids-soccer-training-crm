@@ -9,6 +9,8 @@ interface SignupRow {
   group_session_id: number;
   first_name: string;
   last_name: string;
+  age: number | null;
+  birthday: string | null;
   emergency_contact: string;
   contact_phone: string | null;
   contact_email: string;
@@ -33,6 +35,23 @@ function normalizeOptionalText(value: unknown): string | null {
 function normalizeRequiredText(value: unknown): string | null {
   const normalized = normalizeOptionalText(value);
   return normalized && normalized.length > 0 ? normalized : null;
+}
+
+function normalizeOptionalAge(value: unknown): number | null | undefined {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) return undefined;
+  return parsed;
+}
+
+function normalizeOptionalBirthday(value: unknown): string | null | undefined {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return undefined;
+  return raw;
 }
 
 async function getSessionCapacity(groupSessionId: string) {
@@ -86,9 +105,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const firstName = normalizeRequiredText(body.first_name);
     const lastName = normalizeRequiredText(body.last_name);
+    const age = normalizeOptionalAge(body.age);
+    const birthday = normalizeOptionalBirthday(body.birthday);
     const emergencyContact = normalizeRequiredText(body.emergency_contact);
     const contactEmail = normalizeRequiredText(body.contact_email);
     const contactPhone = normalizeOptionalText(body.contact_phone);
+
+    if (age === undefined) {
+      return errorResponse('Age must be a whole number', 400);
+    }
+    if (birthday === undefined) {
+      return errorResponse('Birthday must be in YYYY-MM-DD format', 400);
+    }
 
     if (!firstName || !lastName || !emergencyContact || !contactEmail) {
       return errorResponse(
@@ -112,6 +140,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         group_session_id,
         first_name,
         last_name,
+        age,
+        birthday,
         emergency_contact,
         contact_phone,
         contact_email,
@@ -124,12 +154,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         stripe_charge_id,
         stripe_receipt_url
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING *`,
       [
         id,
         firstName,
         lastName,
+        age,
+        birthday,
         emergencyContact,
         contactPhone,
         contactEmail,
