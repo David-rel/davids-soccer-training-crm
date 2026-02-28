@@ -2,18 +2,29 @@ import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { createSessionReminders } from '@/lib/reminders';
 import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
+import { syncSessionToGoogleCalendarsSafe } from '@/lib/google-calendar';
+import {
+  defaultSessionEndFromStart,
+  ensureParentEmailInGuestList,
+  ensureSessionCalendarColumns,
+  isEndAfterStart,
+  normalizeSessionTitle,
+  parseGuestEmails,
+} from '@/lib/session-calendar-fields';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
+    await ensureSessionCalendarColumns();
+
     const searchParams = request.nextUrl.searchParams;
     const parentId = searchParams.get('parent_id');
     const upcoming = searchParams.get('upcoming');
 
     let sql = `
-      SELECT s.*, p.name as parent_name,
+      SELECT s.*, p.name as parent_name, p.email as parent_email,
         ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL) as player_names,
         ARRAY_AGG(pl.id) FILTER (WHERE pl.id IS NOT NULL) as player_ids
       FROM crm_sessions s
@@ -33,7 +44,7 @@ export async function GET(request: NextRequest) {
       sql += ' s.session_date >= NOW() AND s.cancelled = false';
     }
 
-    sql += ' GROUP BY s.id, p.name ORDER BY s.session_date DESC';
+    sql += ' GROUP BY s.id, p.name, p.email ORDER BY s.session_date DESC';
 
     const result = await query(sql, params);
     return jsonResponse(result.rows);
@@ -45,21 +56,66 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    await ensureSessionCalendarColumns();
+
     const body = await request.json();
-    const { parent_id, player_ids, session_date, location, price, package_id, notes } = body;
+    const {
+      parent_id,
+      player_ids,
+      session_date,
+      session_end_date,
+      location,
+      price,
+      package_id,
+      notes,
+    } = body;
 
     if (!parent_id || !session_date) {
       return errorResponse('Parent and session date are required', 400);
     }
+    if ('send_email_updates' in body && typeof body.send_email_updates !== 'boolean') {
+      return errorResponse('send_email_updates must be a boolean', 400);
+    }
 
-    // Convert datetime-local input (Arizona time) to UTC ISO string for storage
+    const normalizedTitle = normalizeSessionTitle(body.title);
+    const sendEmailUpdates = body.send_email_updates === true;
+    const parentResult = await query(`SELECT id, email FROM crm_parents WHERE id = $1 LIMIT 1`, [parent_id]);
+    if (parentResult.rows.length === 0) {
+      return errorResponse('Parent not found', 404);
+    }
+    const parentEmail = parentResult.rows[0].email as string | null;
+
+    const { emails: parsedGuestEmails, invalid: invalidGuestEmails } = parseGuestEmails(body.guest_emails);
+    if (invalidGuestEmails.length > 0) {
+      return errorResponse(`Invalid guest email(s): ${invalidGuestEmails.join(', ')}`, 400);
+    }
+    const guestEmails = ensureParentEmailInGuestList(parsedGuestEmails, parentEmail);
+
     const sessionDateUTC = parseDatetimeLocalAsArizona(session_date);
+    const sessionEndDateUTC = session_end_date
+      ? parseDatetimeLocalAsArizona(session_end_date)
+      : defaultSessionEndFromStart(sessionDateUTC);
+
+    if (!isEndAfterStart(sessionDateUTC, sessionEndDateUTC)) {
+      return errorResponse('Session end time must be after start time', 400);
+    }
 
     const result = await query(
-      `INSERT INTO crm_sessions (parent_id, session_date, location, price, package_id, notes)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO crm_sessions (parent_id, title, session_date, session_end_date, location, price, package_id, notes, guest_emails, send_email_updates)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
-      [parent_id, sessionDateUTC, location || null, price || null, package_id || null, notes || null]
+      [
+        parent_id,
+        normalizedTitle,
+        sessionDateUTC,
+        sessionEndDateUTC,
+        location || null,
+        price || null,
+        package_id || null,
+        notes || null,
+        guestEmails,
+        sendEmailUpdates,
+      ]
     );
 
     const session = result.rows[0];
@@ -88,6 +144,8 @@ export async function POST(request: NextRequest) {
       `DELETE FROM crm_reminders WHERE parent_id = $1 AND reminder_category IN ('post_session_follow_up', 'post_first_session_follow_up') AND sent = false`,
       [parent_id]
     );
+
+    await syncSessionToGoogleCalendarsSafe(session.id, 'session create');
 
     return jsonResponse(session, 201);
   } catch (error) {

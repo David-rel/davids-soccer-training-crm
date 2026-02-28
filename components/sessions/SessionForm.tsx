@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
@@ -12,9 +12,15 @@ import Typography from '@mui/material/Typography';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Checkbox from '@mui/material/Checkbox';
 import type { Parent, Player } from '@/lib/types';
+import GooglePlacesTextField from '@/components/common/GooglePlacesTextField';
 
-interface ParentWithPlayers extends Parent {
-  players: Player[];
+function addOneHour(datetimeLocal: string): string {
+  const start = new Date(datetimeLocal);
+  if (Number.isNaN(start.getTime())) return '';
+
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}T${pad(end.getHours())}:${pad(end.getMinutes())}`;
 }
 
 export default function SessionForm() {
@@ -27,10 +33,15 @@ export default function SessionForm() {
   const [parents, setParents] = useState<Parent[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [parentId, setParentId] = useState(preselectedParentId || '');
-  const [packageId, setPackageId] = useState(preselectedPackageId || '');
+  const [packageId] = useState(preselectedPackageId || '');
   const [playerIds, setPlayerIds] = useState<string[]>([]);
   const [sessionDate, setSessionDate] = useState('');
+  const [sessionEndDate, setSessionEndDate] = useState('');
+  const [sessionTitle, setSessionTitle] = useState('');
   const [location, setLocation] = useState('');
+  const [guestEmails, setGuestEmails] = useState('');
+  const [sendEmailUpdates, setSendEmailUpdates] = useState(false);
+  const parentDefaultGuestEmailRef = useRef('');
   const [price, setPrice] = useState('');
   const [notes, setNotes] = useState('');
   const [isFirstSession, setIsFirstSession] = useState(false);
@@ -58,7 +69,22 @@ export default function SessionForm() {
       fetch(`/api/parents/${parentId}`).then((r) => r.json()).then((data) => {
         const hasFirstSession = data.first_session;
         setIsFirstSession(!hasFirstSession);
+
+        const parentEmail =
+          typeof data.email === 'string' ? data.email.trim().toLowerCase() : '';
+        setGuestEmails((previous) => {
+          if (!previous || previous === parentDefaultGuestEmailRef.current) {
+            return parentEmail;
+          }
+          return previous;
+        });
+        parentDefaultGuestEmailRef.current = parentEmail;
       });
+    } else {
+      setGuestEmails((previous) =>
+        previous === parentDefaultGuestEmailRef.current ? '' : previous
+      );
+      parentDefaultGuestEmailRef.current = '';
     }
   }, [parentId]);
 
@@ -69,6 +95,9 @@ export default function SessionForm() {
     setSaving(true);
     try {
       const endpoint = isFirstSession ? '/api/first-sessions' : '/api/sessions';
+      const resolvedEndDate = !isFirstSession
+        ? (sessionEndDate || addOneHour(sessionDate))
+        : '';
       const payload: Record<string, unknown> = {
         parent_id: parseInt(parentId),
         player_ids: playerIds.map(id => parseInt(id)),
@@ -81,9 +110,17 @@ export default function SessionForm() {
       if (isFirstSession) {
         payload.deposit_paid = depositPaid;
         payload.deposit_amount = depositAmount ? parseFloat(depositAmount) : null;
-      } else if (packageId) {
-        // Regular session with package
-        payload.package_id = parseInt(packageId);
+      } else {
+        payload.session_end_date = resolvedEndDate;
+        payload.title = sessionTitle.trim() || null;
+        payload.guest_emails = guestEmails
+          .split(/[,\n;]+/)
+          .map((email) => email.trim())
+          .filter(Boolean);
+        payload.send_email_updates = sendEmailUpdates;
+        if (packageId) {
+          payload.package_id = parseInt(packageId);
+        }
       }
 
       const res = await fetch(endpoint, {
@@ -128,7 +165,7 @@ export default function SessionForm() {
               fullWidth
               required
             >
-              {parents.map((p: any) => (
+              {parents.map((p: Parent & { player_names?: string[] }) => (
                 <MenuItem key={p.id} value={p.id}>
                   {p.name}
                   {p.player_names && p.player_names.length > 0 && ` (${p.player_names.join(', ')})`}
@@ -154,17 +191,72 @@ export default function SessionForm() {
               label="Session Date & Time *"
               type="datetime-local"
               value={sessionDate}
-              onChange={(e) => setSessionDate(e.target.value)}
+              onChange={(e) => {
+                const nextStart = e.target.value;
+                setSessionDate(nextStart);
+                if (!isFirstSession && (!sessionEndDate || sessionEndDate <= nextStart)) {
+                  setSessionEndDate(addOneHour(nextStart));
+                }
+              }}
               fullWidth
               required
               slotProps={{ inputLabel: { shrink: true } }}
             />
 
-            <TextField label="Location" value={location} onChange={(e) => setLocation(e.target.value)} fullWidth />
+            {!isFirstSession && (
+              <TextField
+                label="Session End Time *"
+                type="datetime-local"
+                value={sessionEndDate}
+                onChange={(e) => setSessionEndDate(e.target.value)}
+                fullWidth
+                required
+                slotProps={{ inputLabel: { shrink: true } }}
+              />
+            )}
+
+            {!isFirstSession && (
+              <TextField
+                label="Session Title"
+                value={sessionTitle}
+                onChange={(e) => setSessionTitle(e.target.value)}
+                fullWidth
+                placeholder="Example: Rylen + Mia Weekly Training"
+              />
+            )}
+
+            <GooglePlacesTextField
+              label="Location"
+              value={location}
+              onValueChange={setLocation}
+              fullWidth
+            />
             {!packageId && (
               <TextField label="Price ($)" value={price} onChange={(e) => setPrice(e.target.value)} type="number" fullWidth />
             )}
           </Box>
+
+          {!isFirstSession && (
+            <Box sx={{ mt: 2 }}>
+              <TextField
+                label="Guest Emails (comma separated)"
+                value={guestEmails}
+                onChange={(e) => setGuestEmails(e.target.value)}
+                fullWidth
+                placeholder="parent1@email.com, parent2@email.com"
+              />
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={sendEmailUpdates}
+                    onChange={(e) => setSendEmailUpdates(e.target.checked)}
+                  />
+                }
+                label="Send Google email updates to guests"
+                sx={{ mt: 1 }}
+              />
+            </Box>
+          )}
 
           {isFirstSession && (
             <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
@@ -192,7 +284,12 @@ export default function SessionForm() {
       </Card>
 
       <Box sx={{ display: 'flex', gap: 2 }}>
-        <Button variant="contained" type="submit" disabled={saving || !parentId || !sessionDate} size="large">
+        <Button
+          variant="contained"
+          type="submit"
+          disabled={saving || !parentId || !sessionDate || (!isFirstSession && !sessionEndDate)}
+          size="large"
+        >
           {saving ? 'Saving...' : isFirstSession ? 'Book First Session' : 'Book Session'}
         </Button>
         <Button variant="outlined" onClick={() => router.back()} size="large">Cancel</Button>

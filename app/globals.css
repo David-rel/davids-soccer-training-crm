@@ -56,3 +56,8 @@
   text-overflow: ellipsis !important;
   white-space: nowrap !important;
 }
+
+/* Google Places autocomplete dropdown should render above MUI dialogs/backdrops */
+.pac-container {
+  z-index: 20000 !important;
+}

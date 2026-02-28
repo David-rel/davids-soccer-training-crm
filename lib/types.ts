@@ -85,7 +85,9 @@ export interface Session {
   id: number;
   parent_id: number;
   player_id: number | null;
+  title: string | null;
   session_date: string;
+  session_end_date: string | null;
   location: string | null;
   price: number | null;
   showed_up: boolean | null;
@@ -93,6 +95,8 @@ export interface Session {
   was_paid: boolean;
   payment_method: PaymentMethod | null;
   package_id: number | null;
+  guest_emails: string[] | null;
+  send_email_updates: boolean;
   notes: string | null;
   created_at: string;
   updated_at: string;

@@ -11,7 +11,11 @@
     "backup": "tsx scripts/backup.ts",
     "detect-cold": "tsx scripts/detect-cold-leads.ts",
     "backfill-reminders": "tsx scripts/backfill-reminders.ts",
-    "test-reminders": "tsx scripts/test-sms-reminders.ts"
+    "backfill-session-guests": "tsx scripts/backfill-session-guests.ts",
+    "test-reminders": "tsx scripts/test-sms-reminders.ts",
+    "test-calendars": "tsx scripts/test-google-calendars.ts",
+    "sync-calendars": "tsx scripts/sync-google-calendars.ts",
+    "setup-google-oauth": "tsx scripts/setup-google-oauth.ts"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -23,6 +27,7 @@
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
     "dotenv": "^17.2.3",
+    "google-auth-library": "^10.6.1",
     "next": "16.1.6",
     "pg": "^8.18.0",
     "react": "19.2.3",

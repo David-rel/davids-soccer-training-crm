@@ -23,14 +23,20 @@ import EditIcon from '@mui/icons-material/Edit';
 import CheckIcon from '@mui/icons-material/Check';
 import UndoIcon from '@mui/icons-material/Undo';
 import { formatArizonaDateTime, toDatetimeLocal } from '@/lib/timezone';
+import GooglePlacesTextField from '@/components/common/GooglePlacesTextField';
 
 interface SessionRow {
   id: number;
   parent_id: number;
   parent_name: string;
+  parent_email?: string | null;
+  title?: string | null;
   player_names: string[] | null;
   player_ids: number[] | null;
   session_date: string;
+  session_end_date?: string | null;
+  guest_emails?: string[] | null;
+  send_email_updates?: boolean | null;
   location: string | null;
   price: number | null;
   status?: string;
@@ -72,10 +78,14 @@ export default function SessionList() {
   const [paymentMethod, setPaymentMethod] = useState('');
   const [editDialog, setEditDialog] = useState<{ session: SessionRow; type: 'first' | 'regular' } | null>(null);
   const [editForm, setEditForm] = useState({
+    title: '',
     session_date: '',
+    session_end_date: '',
     location: '',
     price: '',
     notes: '',
+    guest_emails: '',
+    send_email_updates: false,
     player_ids: [] as number[],
   });
   const [availablePlayers, setAvailablePlayers] = useState<Player[]>([]);
@@ -260,10 +270,16 @@ export default function SessionList() {
     }
     
     setEditForm({
+      title: session.title || '',
       session_date: toDatetimeLocal(session.session_date),
+      session_end_date: session.session_end_date ? toDatetimeLocal(session.session_end_date) : '',
       location: session.location || '',
       price: session.price?.toString() || '',
       notes: '',
+      guest_emails: (session.guest_emails && session.guest_emails.length > 0)
+        ? session.guest_emails.join(', ')
+        : (session.parent_email || ''),
+      send_email_updates: session.send_email_updates === true,
       player_ids: session.player_ids || [],
     });
     setEditDialog({ session, type });
@@ -276,15 +292,26 @@ export default function SessionList() {
       ? `/api/first-sessions/${session.id}`
       : `/api/sessions/${session.id}`;
 
-    // Update session details
+    const sessionPayload: Record<string, unknown> = {
+      session_date: editForm.session_date,
+      location: editForm.location.trim() || null,
+      price: editForm.price ? parseFloat(editForm.price) : null,
+    };
+
+    if (type === 'regular') {
+      sessionPayload.title = editForm.title.trim() || null;
+      sessionPayload.session_end_date = editForm.session_end_date || null;
+      sessionPayload.guest_emails = editForm.guest_emails
+        .split(/[,\n;]+/)
+        .map((email) => email.trim())
+        .filter(Boolean);
+      sessionPayload.send_email_updates = editForm.send_email_updates;
+    }
+
     await fetch(endpoint, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_date: editForm.session_date,
-        location: editForm.location.trim() || null,
-        price: editForm.price ? parseFloat(editForm.price) : null,
-      }),
+      body: JSON.stringify(sessionPayload),
     });
 
     // Update players
@@ -309,14 +336,25 @@ export default function SessionList() {
     ...regularSessions.map((s) => ({ ...s, sessionType: 'regular' as const })),
   ];
 
+  const isClosedSession = (session: { status?: string; cancelled: boolean; showed_up: boolean | null }) => {
+    const status = (session.status || '').toLowerCase();
+    return (
+      session.cancelled ||
+      status === 'cancelled' ||
+      status === 'completed' ||
+      status === 'no_show' ||
+      session.showed_up !== null
+    );
+  };
+
   // Split into upcoming and past sessions (compare in Arizona time)
   const now = new Date();
   const upcomingSessions = allSessions
-    .filter((s) => new Date(s.session_date) > now && !s.cancelled && s.showed_up === null)
+    .filter((s) => new Date(s.session_date) > now && !isClosedSession(s))
     .sort((a, b) => new Date(a.session_date).getTime() - new Date(b.session_date).getTime()); // Earliest first
 
   const pastSessions = allSessions
-    .filter((s) => new Date(s.session_date) <= now || s.cancelled || s.showed_up !== null)
+    .filter((s) => new Date(s.session_date) <= now || isClosedSession(s))
     .sort((a, b) => new Date(b.session_date).getTime() - new Date(a.session_date).getTime()); // Most recent first
 
   if (loading) return <Typography color="text.secondary">Loading...</Typography>;
@@ -358,7 +396,9 @@ export default function SessionList() {
               <CardContent sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Box>
                   <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 0.5 }}>
-                    <Typography sx={{ fontWeight: 600 }}>{session.parent_name}</Typography>
+                    <Typography sx={{ fontWeight: 600 }}>
+                      {session.title?.trim() || session.parent_name}
+                    </Typography>
                     {session.player_names && session.player_names.length > 0 && (
                       <Typography variant="body2" color="text.secondary">
                         ({session.player_names.join(', ')})
@@ -376,10 +416,22 @@ export default function SessionList() {
                     )}
                   </Box>
                   <Typography variant="body2" color="text.secondary">
+                    Parent: {session.parent_name} — {' '}
                     {formatArizonaDateTime(session.session_date)}
+                    {session.session_end_date && ` to ${formatArizonaDateTime(session.session_end_date)}`}
                     {session.location && ` — ${session.location}`}
                     {session.price && ` — $${session.price}`}
                   </Typography>
+                  {session.guest_emails && session.guest_emails.length > 0 && (
+                    <Typography variant="body2" color="text.secondary">
+                      Guests: {session.guest_emails.join(', ')}
+                    </Typography>
+                  )}
+                  {session.sessionType === 'regular' && (
+                    <Typography variant="body2" color="text.secondary">
+                      Email Updates: {session.send_email_updates ? 'On' : 'Off'}
+                    </Typography>
+                  )}
                   {session.sessionType === 'first' && session.deposit_paid && (
                     <Typography variant="body2" color="primary.main">
                       Deposit: ${session.deposit_amount || 'Paid'}
@@ -532,6 +584,14 @@ export default function SessionList() {
         <DialogTitle>Edit Session</DialogTitle>
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+            {editDialog?.type === 'regular' && (
+              <TextField
+                label="Session Title"
+                fullWidth
+                value={editForm.title}
+                onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+              />
+            )}
             <TextField
               label="Session Date/Time"
               type="datetime-local"
@@ -540,12 +600,43 @@ export default function SessionList() {
               onChange={(e) => setEditForm({ ...editForm, session_date: e.target.value })}
               slotProps={{ inputLabel: { shrink: true } }}
             />
-            <TextField
+            {editDialog?.type === 'regular' && (
+              <TextField
+                label="Session End Time"
+                type="datetime-local"
+                fullWidth
+                value={editForm.session_end_date}
+                onChange={(e) => setEditForm({ ...editForm, session_end_date: e.target.value })}
+                slotProps={{ inputLabel: { shrink: true } }}
+              />
+            )}
+            <GooglePlacesTextField
               label="Location"
               fullWidth
               value={editForm.location}
-              onChange={(e) => setEditForm({ ...editForm, location: e.target.value })}
+              onValueChange={(value) => setEditForm({ ...editForm, location: value })}
             />
+            {editDialog?.type === 'regular' && (
+              <TextField
+                label="Guest Emails (comma separated)"
+                fullWidth
+                value={editForm.guest_emails}
+                onChange={(e) => setEditForm({ ...editForm, guest_emails: e.target.value })}
+              />
+            )}
+            {editDialog?.type === 'regular' && (
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={editForm.send_email_updates}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, send_email_updates: e.target.checked })
+                    }
+                  />
+                }
+                label="Send Google email updates to guests"
+              />
+            )}
             <TextField
               label="Price ($)"
               type="number"

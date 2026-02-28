@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Calendar, dateFnsLocalizer, View } from "react-big-calendar";
 import { format, parse, startOfWeek, getDay } from "date-fns";
+import { enUS } from "date-fns/locale";
 import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
@@ -13,11 +14,11 @@ import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
 import Typography from "@mui/material/Typography";
 import Chip from "@mui/material/Chip";
-import { toCalendarDate, formatArizona, ARIZONA_TIMEZONE } from "@/lib/timezone";
+import { toCalendarDate, formatArizona } from "@/lib/timezone";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 
 const locales = {
-  "en-US": require("date-fns/locale/en-US"),
+  "en-US": enUS,
 };
 
 const localizer = dateFnsLocalizer({
@@ -64,8 +65,10 @@ interface DashboardData {
   upcomingSessions: Array<{
     id: number;
     parent_name: string;
+    title?: string | null;
     player_names?: string[];
     session_date: string;
+    session_end_date?: string | null;
     location?: string;
     status?: string;
   }>;
@@ -209,10 +212,13 @@ export default function CalendarView() {
         // Add regular sessions
         data.upcomingSessions?.forEach((session) => {
           const startDate = toCalendarDate(session.session_date);
-          const endDate = new Date(startDate.getTime() + 60 * 60000); // 1 hour default
+          const endDate = session.session_end_date
+            ? toCalendarDate(session.session_end_date)
+            : new Date(startDate.getTime() + 60 * 60000); // 1 hour default
+          const sessionLabel = session.title?.trim() || session.parent_name;
           calendarEvents.push({
             id: `session-${session.id}`,
-            title: `⚽ Session: ${session.parent_name}`,
+            title: `⚽ Session: ${sessionLabel}`,
             start: startDate,
             end: endDate,
             type: "session",
