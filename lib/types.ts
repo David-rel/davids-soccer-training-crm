@@ -67,11 +67,15 @@ export interface FirstSession {
   id: number;
   parent_id: number;
   player_id: number | null;
+  title: string | null;
   session_date: string;
+  session_end_date: string | null;
   location: string | null;
   price: number | null;
   deposit_paid: boolean;
   deposit_amount: number | null;
+  guest_emails: string[] | null;
+  send_email_updates: boolean;
   showed_up: boolean | null;
   cancelled: boolean;
   was_paid: boolean;

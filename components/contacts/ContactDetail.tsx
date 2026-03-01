@@ -28,6 +28,7 @@ import CheckIcon from '@mui/icons-material/Check';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import { formatArizonaDate, formatArizonaDateTime, toDateInput } from '@/lib/timezone';
 import type { Gender, ParentDetail, Player } from '@/lib/types';
+import GooglePlacesTextField from '@/components/common/GooglePlacesTextField';
 
 const dmSteps = [
   { value: 'first_message', label: 'First Message' },
@@ -66,6 +67,14 @@ function formatBirthdayDisplay(value: string | null | undefined): string | null 
   return `${parts[1]}/${parts[2]}/${parts[0]}`;
 }
 
+function addOneHour(datetimeLocal: string): string {
+  const start = new Date(datetimeLocal);
+  if (Number.isNaN(start.getTime())) return '';
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}T${pad(end.getHours())}:${pad(end.getMinutes())}`;
+}
+
 export default function ContactDetail({ id }: { id: string }) {
   const router = useRouter();
   const [parent, setParent] = useState<ParentDetail | null>(null);
@@ -78,8 +87,12 @@ export default function ContactDetail({ id }: { id: string }) {
   const [newPlayer, setNewPlayer] = useState({ name: '', age: '', birthday: '', team: '', gender: '' as Gender | '', notes: '' });
   const [firstSessionForm, setFirstSessionForm] = useState({
     player_ids: [] as string[],
+    title: '',
     session_date: '',
+    session_end_date: '',
     location: '',
+    guest_emails: '',
+    send_email_updates: false,
     price: '',
     deposit_paid: false,
     deposit_amount: '',
@@ -98,6 +111,14 @@ export default function ContactDetail({ id }: { id: string }) {
   useEffect(() => {
     fetchParent();
   }, [fetchParent]);
+
+  useEffect(() => {
+    if (!parent?.email) return;
+    setFirstSessionForm((prev) => {
+      if (prev.guest_emails.trim()) return prev;
+      return { ...prev, guest_emails: parent.email || '' };
+    });
+  }, [parent?.email]);
 
   const updateField = async (field: string, value: unknown) => {
     try {
@@ -222,15 +243,34 @@ export default function ContactDetail({ id }: { id: string }) {
         body: JSON.stringify({
           parent_id: parseInt(id),
           player_ids: firstSessionForm.player_ids.map(id => parseInt(id)),
+          title: firstSessionForm.title.trim() || null,
           session_date: firstSessionForm.session_date,
+          session_end_date: firstSessionForm.session_end_date || addOneHour(firstSessionForm.session_date) || null,
           location: firstSessionForm.location.trim(),
+          guest_emails: firstSessionForm.guest_emails
+            .split(/[,\n;]+/)
+            .map((email) => email.trim())
+            .filter(Boolean),
+          send_email_updates: firstSessionForm.send_email_updates,
           price: firstSessionForm.price ? parseFloat(firstSessionForm.price) : null,
           deposit_paid: firstSessionForm.deposit_paid,
           deposit_amount: firstSessionForm.deposit_amount ? parseFloat(firstSessionForm.deposit_amount) : null,
           notes: firstSessionForm.notes.trim() || null,
         }),
       });
-      setFirstSessionForm({ player_ids: [], session_date: '', location: '', price: '', deposit_paid: false, deposit_amount: '', notes: '' });
+      setFirstSessionForm({
+        player_ids: [],
+        title: '',
+        session_date: '',
+        session_end_date: '',
+        location: '',
+        guest_emails: parent?.email || '',
+        send_email_updates: false,
+        price: '',
+        deposit_paid: false,
+        deposit_amount: '',
+        notes: '',
+      });
       fetchParent();
     } catch (error) {
       console.error('Error booking first session:', error);
@@ -447,15 +487,61 @@ export default function ContactDetail({ id }: { id: string }) {
                 size="small"
                 fullWidth
                 value={firstSessionForm.session_date}
-                onChange={(e) => setFirstSessionForm({ ...firstSessionForm, session_date: e.target.value })}
+                onChange={(e) =>
+                  setFirstSessionForm((prev) => {
+                    const nextStart = e.target.value;
+                    return {
+                      ...prev,
+                      session_date: nextStart,
+                      session_end_date:
+                        !prev.session_end_date || prev.session_end_date <= nextStart
+                          ? addOneHour(nextStart)
+                          : prev.session_end_date,
+                    };
+                  })
+                }
                 slotProps={{ inputLabel: { shrink: true } }}
               />
               <TextField
+                label="Session End Time *"
+                type="datetime-local"
+                size="small"
+                fullWidth
+                value={firstSessionForm.session_end_date}
+                onChange={(e) => setFirstSessionForm({ ...firstSessionForm, session_end_date: e.target.value })}
+                slotProps={{ inputLabel: { shrink: true } }}
+              />
+              <TextField
+                label="Session Title"
+                size="small"
+                fullWidth
+                value={firstSessionForm.title}
+                onChange={(e) => setFirstSessionForm({ ...firstSessionForm, title: e.target.value })}
+              />
+              <GooglePlacesTextField
                 label="Location *"
                 size="small"
                 fullWidth
                 value={firstSessionForm.location}
-                onChange={(e) => setFirstSessionForm({ ...firstSessionForm, location: e.target.value })}
+                onValueChange={(value) => setFirstSessionForm({ ...firstSessionForm, location: value })}
+              />
+              <TextField
+                label="Guest Emails (comma separated)"
+                size="small"
+                fullWidth
+                value={firstSessionForm.guest_emails}
+                onChange={(e) => setFirstSessionForm({ ...firstSessionForm, guest_emails: e.target.value })}
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={firstSessionForm.send_email_updates}
+                    onChange={(e) =>
+                      setFirstSessionForm({ ...firstSessionForm, send_email_updates: e.target.checked })
+                    }
+                  />
+                }
+                label="Send Google email updates to guests"
               />
               {parent.players && parent.players.length > 0 && (
                 <TextField
@@ -513,7 +599,12 @@ export default function ContactDetail({ id }: { id: string }) {
                 variant="contained"
                 color="success"
                 onClick={bookFirstSession}
-                disabled={bookingFirstSession || !firstSessionForm.session_date || !firstSessionForm.location.trim()}
+                disabled={
+                  bookingFirstSession ||
+                  !firstSessionForm.session_date ||
+                  !firstSessionForm.session_end_date ||
+                  !firstSessionForm.location.trim()
+                }
               >
                 {bookingFirstSession ? 'Booking...' : 'Book First Session'}
               </Button>

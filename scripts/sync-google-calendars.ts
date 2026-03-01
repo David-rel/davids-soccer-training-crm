@@ -6,6 +6,7 @@ config({ path: '.env' });
 
 import {
   clearFutureEventsFromManagedCalendars,
+  syncUpcomingFirstSessionsToGoogleCalendars,
   syncUpcomingSessionsToGoogleCalendars,
 } from '@/lib/google-calendar';
 import { getPool } from '@/lib/db';
@@ -42,7 +43,18 @@ async function main() {
     console.log(`Deleted ${wipe.deleted} event(s) from Google Calendar.`);
   }
 
-  const result = await syncUpcomingSessionsToGoogleCalendars(daysAhead);
+  const [sessionResult, firstSessionResult] = await Promise.all([
+    syncUpcomingSessionsToGoogleCalendars(daysAhead),
+    syncUpcomingFirstSessionsToGoogleCalendars(daysAhead),
+  ]);
+  console.log('Regular session sync complete:', sessionResult);
+  console.log('First session sync complete:', firstSessionResult);
+
+  const result = {
+    total: sessionResult.total + firstSessionResult.total,
+    synced: sessionResult.synced + firstSessionResult.synced,
+    failed: sessionResult.failed + firstSessionResult.failed,
+  };
   console.log('Bulk sync complete:', result);
 
   await getPool().end();

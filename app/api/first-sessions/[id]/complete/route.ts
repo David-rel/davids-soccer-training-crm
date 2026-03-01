@@ -1,6 +1,7 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { createFollowUpReminders } from '@/lib/reminders';
+import { syncFirstSessionToGoogleCalendarsSafe } from '@/lib/google-calendar';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -33,6 +34,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         });
       }
     }
+
+    await syncFirstSessionToGoogleCalendarsSafe(session.id, 'first session complete');
 
     return jsonResponse(session);
   } catch (error) {

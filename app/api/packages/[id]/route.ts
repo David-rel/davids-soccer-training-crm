@@ -32,6 +32,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         pkg.created_at,
         pkg.updated_at,
         p.name as parent_name,
+        p.email as parent_email,
         (SELECT ARRAY_AGG(name ORDER BY created_at) FROM crm_players WHERE parent_id = p.id) as player_names
       FROM crm_packages pkg
       JOIN crm_parents p ON p.id = pkg.parent_id

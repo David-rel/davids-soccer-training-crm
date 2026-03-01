@@ -1,5 +1,6 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
+import { syncFirstSessionToGoogleCalendarsSafe } from '@/lib/google-calendar';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
        WHERE first_session_id = $1`,
       [id]
     );
+    await syncFirstSessionToGoogleCalendarsSafe(result.rows[0].id, 'first session cancel');
 
     return jsonResponse(result.rows[0]);
   } catch (error) {

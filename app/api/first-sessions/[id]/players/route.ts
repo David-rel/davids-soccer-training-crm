@@ -1,5 +1,6 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
+import { syncFirstSessionToGoogleCalendarsSafe } from '@/lib/google-calendar';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -29,6 +30,8 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
         );
       }
     }
+
+    await syncFirstSessionToGoogleCalendarsSafe(id, 'first session players update');
 
     return jsonResponse({ success: true });
   } catch (error) {

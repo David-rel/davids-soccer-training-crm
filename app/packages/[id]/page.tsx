@@ -12,11 +12,14 @@ import TextField from '@mui/material/TextField';
 import Divider from '@mui/material/Divider';
 import MenuItem from '@mui/material/MenuItem';
 import Alert from '@mui/material/Alert';
+import Checkbox from '@mui/material/Checkbox';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import { formatArizonaDateTime, toDatetimeLocal } from '@/lib/timezone';
+import GooglePlacesTextField from '@/components/common/GooglePlacesTextField';
 
 const packageTypeLabels: Record<string, string> = {
   '12_week_1x': '12 Weeks - 1x/week',
@@ -70,10 +73,18 @@ function formatScheduleSeed(date: Date): string {
   return `${year}-${month}-${day}T${hour}:${minute}`;
 }
 
+function addOneHour(datetimeLocal: string): string {
+  const start = parseScheduleSeed(datetimeLocal);
+  if (!start) return '';
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  return formatScheduleSeed(end);
+}
+
 interface PackageDetail {
   id: number;
   parent_id: number;
   parent_name: string;
+  parent_email?: string | null;
   player_names: string[] | null;
   package_type: string;
   total_sessions: number;
@@ -85,11 +96,15 @@ interface PackageDetail {
   sessions: Array<{
     id: number;
     parent_id: number;
+    title: string | null;
     session_date: string;
+    session_end_date: string | null;
     status?: string | null;
     player_names: string[] | null;
     player_ids: number[] | null;
     location: string | null;
+    guest_emails: string[] | null;
+    send_email_updates: boolean | null;
     notes: string | null;
     showed_up: boolean | null;
     cancelled: boolean;
@@ -111,16 +126,24 @@ interface PlayerOption {
 }
 
 interface ScheduleFormState {
+  title: string;
   sessionDate: string;
+  sessionEndDate: string;
   autoSlots: string[];
   location: string;
+  guestEmails: string;
+  sendEmailUpdates: boolean;
   notes: string;
   playerIds: number[];
 }
 
 interface EditFormState {
+  title: string;
   sessionDate: string;
+  sessionEndDate: string;
   location: string;
+  guestEmails: string;
+  sendEmailUpdates: boolean;
   notes: string;
   playerIds: number[];
 }
@@ -142,16 +165,24 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>({
+    title: '',
     sessionDate: '',
+    sessionEndDate: '',
     autoSlots: [''],
     location: '',
+    guestEmails: '',
+    sendEmailUpdates: false,
     notes: '',
     playerIds: [],
   });
   const [editingSession, setEditingSession] = useState<PackageDetail['sessions'][number] | null>(null);
   const [editForm, setEditForm] = useState<EditFormState>({
+    title: '',
     sessionDate: '',
+    sessionEndDate: '',
     location: '',
+    guestEmails: '',
+    sendEmailUpdates: false,
     notes: '',
     playerIds: [],
   });
@@ -235,7 +266,7 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
     return ids;
   };
 
-  const createPackageSession = async (sessionDate: string) => {
+  const createPackageSession = async (sessionDate: string, sessionEndDate?: string) => {
     if (!pkg) return false;
 
     const response = await fetch('/api/sessions', {
@@ -245,8 +276,15 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
         parent_id: pkg.parent_id,
         package_id: pkg.id,
         player_ids: scheduleForm.playerIds,
+        title: scheduleForm.title.trim() || null,
         session_date: sessionDate,
+        session_end_date: sessionEndDate || addOneHour(sessionDate) || null,
         location: scheduleForm.location.trim() || null,
+        guest_emails: scheduleForm.guestEmails
+          .split(/[,\n;]+/)
+          .map((email) => email.trim())
+          .filter(Boolean),
+        send_email_updates: scheduleForm.sendEmailUpdates,
         notes: scheduleForm.notes.trim() || null,
       }),
     });
@@ -259,9 +297,13 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
     setScheduleMode(mode);
     setScheduleError(null);
     setScheduleForm({
+      title: '',
       sessionDate: '',
+      sessionEndDate: '',
       autoSlots: Array.from({ length: sessionsPerWeek }, () => ''),
       location: '',
+      guestEmails: pkg?.parent_email || '',
+      sendEmailUpdates: false,
       notes: '',
       playerIds: defaultPlayerIds,
     });
@@ -284,7 +326,12 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
           setScheduleError('Pick a session date/time.');
           return;
         }
-        const success = await createPackageSession(scheduleForm.sessionDate);
+        const resolvedEnd = scheduleForm.sessionEndDate || addOneHour(scheduleForm.sessionDate);
+        if (!resolvedEnd || resolvedEnd <= scheduleForm.sessionDate) {
+          setScheduleError('Session end time must be after session start time.');
+          return;
+        }
+        const success = await createPackageSession(scheduleForm.sessionDate, resolvedEnd);
         if (!success) {
           setScheduleError('Could not schedule session.');
           return;
@@ -341,7 +388,7 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
 
         for (const sessionDate of newDateTimes) {
           // Keep order deterministic and avoid overloading APIs/reminder inserts.
-          const success = await createPackageSession(sessionDate);
+          const success = await createPackageSession(sessionDate, addOneHour(sessionDate));
           if (!success) {
             setScheduleError('Some sessions could not be scheduled. Please try again.');
             return;
@@ -359,8 +406,12 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   const openEditDialog = (session: PackageDetail['sessions'][number]) => {
     setEditingSession(session);
     setEditForm({
+      title: session.title || '',
       sessionDate: toDatetimeLocal(session.session_date),
+      sessionEndDate: session.session_end_date ? toDatetimeLocal(session.session_end_date) : '',
       location: session.location || '',
+      guestEmails: (session.guest_emails && session.guest_emails.length > 0) ? session.guest_emails.join(', ') : '',
+      sendEmailUpdates: session.send_email_updates === true,
       notes: session.notes || '',
       playerIds: session.player_ids || [],
     });
@@ -376,8 +427,15 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          title: editForm.title.trim() || null,
           session_date: editForm.sessionDate,
+          session_end_date: editForm.sessionEndDate || null,
           location: editForm.location.trim() || null,
+          guest_emails: editForm.guestEmails
+            .split(/[,\n;]+/)
+            .map((email) => email.trim())
+            .filter(Boolean),
+          send_email_updates: editForm.sendEmailUpdates,
           notes: editForm.notes.trim() || null,
         }),
       });
@@ -676,15 +734,40 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
             )}
 
             {scheduleMode === 'single' ? (
-              <TextField
-                label="Session Date & Time"
-                type="datetime-local"
-                value={scheduleForm.sessionDate}
-                onChange={(event) => setScheduleForm((prev) => ({ ...prev, sessionDate: event.target.value }))}
-                slotProps={{ inputLabel: { shrink: true } }}
-                fullWidth
-                required
-              />
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <TextField
+                  label="Session Date & Time"
+                  type="datetime-local"
+                  value={scheduleForm.sessionDate}
+                  onChange={(event) =>
+                    setScheduleForm((prev) => {
+                      const nextStart = event.target.value;
+                      return {
+                        ...prev,
+                        sessionDate: nextStart,
+                        sessionEndDate:
+                          !prev.sessionEndDate || prev.sessionEndDate <= nextStart
+                            ? addOneHour(nextStart)
+                            : prev.sessionEndDate,
+                      };
+                    })
+                  }
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  fullWidth
+                  required
+                />
+                <TextField
+                  label="Session End Time"
+                  type="datetime-local"
+                  value={scheduleForm.sessionEndDate}
+                  onChange={(event) =>
+                    setScheduleForm((prev) => ({ ...prev, sessionEndDate: event.target.value }))
+                  }
+                  slotProps={{ inputLabel: { shrink: true } }}
+                  fullWidth
+                  required
+                />
+              </Box>
             ) : (
               scheduleForm.autoSlots.map((slot, index) => (
                 <TextField
@@ -705,10 +788,35 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
             )}
 
             <TextField
+              label="Session Title"
+              value={scheduleForm.title}
+              onChange={(event) => setScheduleForm((prev) => ({ ...prev, title: event.target.value }))}
+              fullWidth
+            />
+
+            <GooglePlacesTextField
               label="Location"
               value={scheduleForm.location}
-              onChange={(event) => setScheduleForm((prev) => ({ ...prev, location: event.target.value }))}
+              onValueChange={(value) => setScheduleForm((prev) => ({ ...prev, location: value }))}
               fullWidth
+            />
+
+            <TextField
+              label="Guest Emails (comma separated)"
+              value={scheduleForm.guestEmails}
+              onChange={(event) => setScheduleForm((prev) => ({ ...prev, guestEmails: event.target.value }))}
+              fullWidth
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={scheduleForm.sendEmailUpdates}
+                  onChange={(event) =>
+                    setScheduleForm((prev) => ({ ...prev, sendEmailUpdates: event.target.checked }))
+                  }
+                />
+              }
+              label="Send Google email updates to guests"
             />
 
             {players.length > 0 && (
@@ -764,6 +872,12 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
         <DialogContent>
           <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
             <TextField
+              label="Session Title"
+              value={editForm.title}
+              onChange={(event) => setEditForm((prev) => ({ ...prev, title: event.target.value }))}
+              fullWidth
+            />
+            <TextField
               label="Session Date & Time"
               type="datetime-local"
               value={editForm.sessionDate}
@@ -773,10 +887,35 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
               required
             />
             <TextField
+              label="Session End Time"
+              type="datetime-local"
+              value={editForm.sessionEndDate}
+              onChange={(event) => setEditForm((prev) => ({ ...prev, sessionEndDate: event.target.value }))}
+              slotProps={{ inputLabel: { shrink: true } }}
+              fullWidth
+            />
+            <GooglePlacesTextField
               label="Location"
               value={editForm.location}
-              onChange={(event) => setEditForm((prev) => ({ ...prev, location: event.target.value }))}
+              onValueChange={(value) => setEditForm((prev) => ({ ...prev, location: value }))}
               fullWidth
+            />
+            <TextField
+              label="Guest Emails (comma separated)"
+              value={editForm.guestEmails}
+              onChange={(event) => setEditForm((prev) => ({ ...prev, guestEmails: event.target.value }))}
+              fullWidth
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={editForm.sendEmailUpdates}
+                  onChange={(event) =>
+                    setEditForm((prev) => ({ ...prev, sendEmailUpdates: event.target.checked }))
+                  }
+                />
+              }
+              label="Send Google email updates to guests"
             />
             {players.length > 0 && (
               <TextField

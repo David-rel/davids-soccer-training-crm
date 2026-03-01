@@ -1,5 +1,6 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
+import { syncFirstSessionToGoogleCalendarsSafe } from '@/lib/google-calendar';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +17,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     );
 
     if (result.rows.length === 0) return errorResponse('First session not found', 404);
+    await syncFirstSessionToGoogleCalendarsSafe(result.rows[0].id, 'first session accept');
 
     return jsonResponse(result.rows[0]);
   } catch (error) {
