@@ -262,13 +262,22 @@ export default function SessionList() {
   };
 
   const openEditDialog = async (session: SessionRow, type: 'first' | 'regular') => {
-    // Fetch parent's players
-    const res = await fetch(`/api/parents/${session.parent_id}/players`);
-    if (res.ok) {
-      const players = await res.json();
+    const [playersRes, parentRes] = await Promise.all([
+      fetch(`/api/parents/${session.parent_id}/players`),
+      fetch(`/api/parents/${session.parent_id}`),
+    ]);
+
+    if (playersRes.ok) {
+      const players = await playersRes.json();
       setAvailablePlayers(players);
     }
-    
+
+    let liveParentEmail = '';
+    if (parentRes.ok) {
+      const parent = await parentRes.json();
+      liveParentEmail = typeof parent?.email === 'string' ? parent.email.trim() : '';
+    }
+
     setEditForm({
       title: session.title || '',
       session_date: toDatetimeLocal(session.session_date),
@@ -278,7 +287,7 @@ export default function SessionList() {
       notes: '',
       guest_emails: (session.guest_emails && session.guest_emails.length > 0)
         ? session.guest_emails.join(', ')
-        : (session.parent_email || ''),
+        : (session.parent_email || liveParentEmail || ''),
       send_email_updates: session.send_email_updates === true,
       player_ids: session.player_ids || [],
     });
