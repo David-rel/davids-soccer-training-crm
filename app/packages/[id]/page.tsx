@@ -410,7 +410,10 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
       sessionDate: toDatetimeLocal(session.session_date),
       sessionEndDate: session.session_end_date ? toDatetimeLocal(session.session_end_date) : '',
       location: session.location || '',
-      guestEmails: (session.guest_emails && session.guest_emails.length > 0) ? session.guest_emails.join(', ') : '',
+      guestEmails:
+        (session.guest_emails && session.guest_emails.length > 0)
+          ? session.guest_emails.join(', ')
+          : (pkg?.parent_email || ''),
       sendEmailUpdates: session.send_email_updates === true,
       notes: session.notes || '',
       playerIds: session.player_ids || [],

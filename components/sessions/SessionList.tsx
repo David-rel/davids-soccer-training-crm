@@ -294,19 +294,16 @@ export default function SessionList() {
 
     const sessionPayload: Record<string, unknown> = {
       session_date: editForm.session_date,
+      session_end_date: editForm.session_end_date || null,
+      title: editForm.title.trim() || null,
       location: editForm.location.trim() || null,
       price: editForm.price ? parseFloat(editForm.price) : null,
-    };
-
-    if (type === 'regular') {
-      sessionPayload.title = editForm.title.trim() || null;
-      sessionPayload.session_end_date = editForm.session_end_date || null;
-      sessionPayload.guest_emails = editForm.guest_emails
+      guest_emails: editForm.guest_emails
         .split(/[,\n;]+/)
         .map((email) => email.trim())
-        .filter(Boolean);
-      sessionPayload.send_email_updates = editForm.send_email_updates;
-    }
+        .filter(Boolean),
+      send_email_updates: editForm.send_email_updates,
+    };
 
     await fetch(endpoint, {
       method: 'PATCH',
@@ -427,11 +424,9 @@ export default function SessionList() {
                       Guests: {session.guest_emails.join(', ')}
                     </Typography>
                   )}
-                  {session.sessionType === 'regular' && (
-                    <Typography variant="body2" color="text.secondary">
-                      Email Updates: {session.send_email_updates ? 'On' : 'Off'}
-                    </Typography>
-                  )}
+                  <Typography variant="body2" color="text.secondary">
+                    Email Updates: {session.send_email_updates ? 'On' : 'Off'}
+                  </Typography>
                   {session.sessionType === 'first' && session.deposit_paid && (
                     <Typography variant="body2" color="primary.main">
                       Deposit: ${session.deposit_amount || 'Paid'}
@@ -584,14 +579,12 @@ export default function SessionList() {
         <DialogTitle>Edit Session</DialogTitle>
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-            {editDialog?.type === 'regular' && (
-              <TextField
-                label="Session Title"
-                fullWidth
-                value={editForm.title}
-                onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
-              />
-            )}
+            <TextField
+              label="Session Title"
+              fullWidth
+              value={editForm.title}
+              onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
+            />
             <TextField
               label="Session Date/Time"
               type="datetime-local"
@@ -600,43 +593,37 @@ export default function SessionList() {
               onChange={(e) => setEditForm({ ...editForm, session_date: e.target.value })}
               slotProps={{ inputLabel: { shrink: true } }}
             />
-            {editDialog?.type === 'regular' && (
-              <TextField
-                label="Session End Time"
-                type="datetime-local"
-                fullWidth
-                value={editForm.session_end_date}
-                onChange={(e) => setEditForm({ ...editForm, session_end_date: e.target.value })}
-                slotProps={{ inputLabel: { shrink: true } }}
-              />
-            )}
+            <TextField
+              label="Session End Time"
+              type="datetime-local"
+              fullWidth
+              value={editForm.session_end_date}
+              onChange={(e) => setEditForm({ ...editForm, session_end_date: e.target.value })}
+              slotProps={{ inputLabel: { shrink: true } }}
+            />
             <GooglePlacesTextField
               label="Location"
               fullWidth
               value={editForm.location}
               onValueChange={(value) => setEditForm({ ...editForm, location: value })}
             />
-            {editDialog?.type === 'regular' && (
-              <TextField
-                label="Guest Emails (comma separated)"
-                fullWidth
-                value={editForm.guest_emails}
-                onChange={(e) => setEditForm({ ...editForm, guest_emails: e.target.value })}
-              />
-            )}
-            {editDialog?.type === 'regular' && (
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={editForm.send_email_updates}
-                    onChange={(e) =>
-                      setEditForm({ ...editForm, send_email_updates: e.target.checked })
-                    }
-                  />
-                }
-                label="Send Google email updates to guests"
-              />
-            )}
+            <TextField
+              label="Guest Emails (comma separated)"
+              fullWidth
+              value={editForm.guest_emails}
+              onChange={(e) => setEditForm({ ...editForm, guest_emails: e.target.value })}
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={editForm.send_email_updates}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, send_email_updates: e.target.checked })
+                  }
+                />
+              }
+              label="Send Google email updates to guests"
+            />
             <TextField
               label="Price ($)"
               type="number"

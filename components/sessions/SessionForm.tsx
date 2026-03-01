@@ -105,19 +105,21 @@ export default function SessionForm() {
         location: location || null,
         price: packageId ? null : (price ? parseFloat(price) : null), // No price for package sessions
         notes: notes || null,
+        guest_emails: guestEmails
+          .split(/[,\n;]+/)
+          .map((email) => email.trim())
+          .filter(Boolean),
+        send_email_updates: sendEmailUpdates,
       };
 
       if (isFirstSession) {
         payload.deposit_paid = depositPaid;
         payload.deposit_amount = depositAmount ? parseFloat(depositAmount) : null;
+        payload.title = sessionTitle.trim() || null;
+        payload.session_end_date = sessionEndDate || addOneHour(sessionDate) || null;
       } else {
         payload.session_end_date = resolvedEndDate;
         payload.title = sessionTitle.trim() || null;
-        payload.guest_emails = guestEmails
-          .split(/[,\n;]+/)
-          .map((email) => email.trim())
-          .filter(Boolean);
-        payload.send_email_updates = sendEmailUpdates;
         if (packageId) {
           payload.package_id = parseInt(packageId);
         }
@@ -203,27 +205,23 @@ export default function SessionForm() {
               slotProps={{ inputLabel: { shrink: true } }}
             />
 
-            {!isFirstSession && (
-              <TextField
-                label="Session End Time *"
-                type="datetime-local"
-                value={sessionEndDate}
-                onChange={(e) => setSessionEndDate(e.target.value)}
-                fullWidth
-                required
-                slotProps={{ inputLabel: { shrink: true } }}
-              />
-            )}
+            <TextField
+              label="Session End Time *"
+              type="datetime-local"
+              value={sessionEndDate}
+              onChange={(e) => setSessionEndDate(e.target.value)}
+              fullWidth
+              required
+              slotProps={{ inputLabel: { shrink: true } }}
+            />
 
-            {!isFirstSession && (
-              <TextField
-                label="Session Title"
-                value={sessionTitle}
-                onChange={(e) => setSessionTitle(e.target.value)}
-                fullWidth
-                placeholder="Example: Rylen + Mia Weekly Training"
-              />
-            )}
+            <TextField
+              label="Session Title"
+              value={sessionTitle}
+              onChange={(e) => setSessionTitle(e.target.value)}
+              fullWidth
+              placeholder="Example: Rylen + Mia Weekly Training"
+            />
 
             <GooglePlacesTextField
               label="Location"
@@ -236,27 +234,25 @@ export default function SessionForm() {
             )}
           </Box>
 
-          {!isFirstSession && (
-            <Box sx={{ mt: 2 }}>
-              <TextField
-                label="Guest Emails (comma separated)"
-                value={guestEmails}
-                onChange={(e) => setGuestEmails(e.target.value)}
-                fullWidth
-                placeholder="parent1@email.com, parent2@email.com"
-              />
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={sendEmailUpdates}
-                    onChange={(e) => setSendEmailUpdates(e.target.checked)}
-                  />
-                }
-                label="Send Google email updates to guests"
-                sx={{ mt: 1 }}
-              />
-            </Box>
-          )}
+          <Box sx={{ mt: 2 }}>
+            <TextField
+              label="Guest Emails (comma separated)"
+              value={guestEmails}
+              onChange={(e) => setGuestEmails(e.target.value)}
+              fullWidth
+              placeholder="parent1@email.com, parent2@email.com"
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={sendEmailUpdates}
+                  onChange={(e) => setSendEmailUpdates(e.target.checked)}
+                />
+              }
+              label="Send Google email updates to guests"
+              sx={{ mt: 1 }}
+            />
+          </Box>
 
           {isFirstSession && (
             <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 2 }}>
