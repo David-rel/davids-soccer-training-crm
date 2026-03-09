@@ -11,6 +11,8 @@ let jwtClient: JWT | null = null;
 let oauthClient: OAuth2Client | null = null;
 let ensureTablePromise: Promise<void> | null = null;
 let hasLoggedMissingConfig = false;
+let hasLoggedOauthFallback = false;
+let forceServiceAccountFallback = false;
 
 type GoogleAuthConfig =
   | {
@@ -167,6 +169,24 @@ function getGoogleCalendarConfig(): GoogleCalendarConfig | null {
   };
 }
 
+function getServiceAccountAuthFromEnv(): Extract<GoogleAuthConfig, { kind: 'service_account' }> | null {
+  const serviceClientEmail = (process.env.GOOGLE_CLIENT_EMAIL || '').trim();
+  const servicePrivateKeyRaw = process.env.GOOGLE_PRIVATE_KEY || '';
+  if (!serviceClientEmail || !servicePrivateKeyRaw) return null;
+  return {
+    kind: 'service_account',
+    clientEmail: serviceClientEmail,
+    privateKey: servicePrivateKeyRaw.replace(/\\n/g, '\n'),
+  };
+}
+
+function isInvalidGrantError(error: unknown): boolean {
+  if (!error) return false;
+  const message =
+    error instanceof Error ? error.message : typeof error === 'string' ? error : JSON.stringify(error);
+  return message.toLowerCase().includes('invalid_grant');
+}
+
 function logMissingConfigOnce(): void {
   if (hasLoggedMissingConfig) return;
 
@@ -200,10 +220,40 @@ function getOauthClient(auth: Extract<GoogleAuthConfig, { kind: 'oauth_user' }>)
 }
 
 async function getAccessToken(config: GoogleCalendarConfig): Promise<string> {
-  const tokenResponse =
-    config.auth.kind === 'oauth_user'
-      ? await getOauthClient(config.auth).getAccessToken()
-      : await getJwtClient(config.auth).getAccessToken();
+  let tokenResponse: string | { token?: string | null } | null;
+
+  if (config.auth.kind === 'oauth_user' && !forceServiceAccountFallback) {
+    try {
+      tokenResponse = await getOauthClient(config.auth).getAccessToken();
+    } catch (error) {
+      if (!isInvalidGrantError(error)) throw error;
+
+      const serviceFallback = getServiceAccountAuthFromEnv();
+      if (!serviceFallback) throw error;
+      forceServiceAccountFallback = true;
+
+      if (!hasLoggedOauthFallback) {
+        console.warn(
+          'Google OAuth refresh token returned invalid_grant; falling back to service account credentials.'
+        );
+        hasLoggedOauthFallback = true;
+      }
+      tokenResponse = await getJwtClient(serviceFallback).getAccessToken();
+    }
+  } else {
+    if (config.auth.kind === 'service_account') {
+      tokenResponse = await getJwtClient(config.auth).getAccessToken();
+    } else {
+      const serviceFallback = getServiceAccountAuthFromEnv();
+      if (!serviceFallback) {
+        throw new Error(
+          'OAuth refresh token is invalid and no service account fallback is configured.'
+        );
+      }
+      tokenResponse = await getJwtClient(serviceFallback).getAccessToken();
+    }
+  }
+
   const token =
     typeof tokenResponse === 'string' ? tokenResponse : tokenResponse?.token || null;
 
