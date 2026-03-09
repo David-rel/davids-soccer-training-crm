@@ -16,7 +16,9 @@ import DialogActions from '@mui/material/DialogActions';
 import TextField from '@mui/material/TextField';
 import MenuItem from '@mui/material/MenuItem';
 import LinearProgress from '@mui/material/LinearProgress';
+import IconButton from '@mui/material/IconButton';
 import AddIcon from '@mui/icons-material/Add';
+import DeleteIcon from '@mui/icons-material/Delete';
 import type { Parent } from '@/lib/types';
 
 const packageTypeLabels: Record<string, string> = {
@@ -45,12 +47,16 @@ interface PackageRow {
   is_active: boolean;
 }
 
+type ParentOption = Parent & {
+  player_names?: string[] | null;
+};
+
 export const dynamic = 'force-dynamic';
 
 export default function PackagesPage() {
   const router = useRouter();
   const [packages, setPackages] = useState<PackageRow[]>([]);
-  const [parents, setParents] = useState<Parent[]>([]);
+  const [parents, setParents] = useState<ParentOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [parentId, setParentId] = useState('');
@@ -58,6 +64,8 @@ export default function PackagesPage() {
   const [price, setPrice] = useState('');
   const [startDate, setStartDate] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<PackageRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchPackages = async () => {
     setLoading(true);
@@ -96,6 +104,21 @@ export default function PackagesPage() {
     setSaving(false);
   };
 
+  const handleDeletePackage = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/packages/${deleteTarget.id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) return;
+      setDeleteTarget(null);
+      await fetchPackages();
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   if (loading) return <Typography>Loading...</Typography>;
 
   return (
@@ -131,6 +154,19 @@ export default function PackagesPage() {
                   borderColor: pkg.is_active ? 'success.main' : 'divider',
                 }}
               >
+                <Box sx={{ display: 'flex', justifyContent: 'flex-end', px: 1, pt: 1 }}>
+                  <IconButton
+                    size="small"
+                    color="error"
+                    aria-label="Delete package"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setDeleteTarget(pkg);
+                    }}
+                  >
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Box>
                 <CardActionArea onClick={() => router.push(`/packages/${pkg.id}`)}>
                   <CardContent sx={{ py: 2 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
@@ -195,7 +231,7 @@ export default function PackagesPage() {
         <DialogContent>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
             <TextField label="Parent *" value={parentId} onChange={(e) => setParentId(e.target.value)} select fullWidth>
-              {parents.map((p: any) => (
+              {parents.map((p) => (
                 <MenuItem key={p.id} value={p.id}>
                   {p.name}
                   {p.player_names && p.player_names.length > 0 && ` (${p.player_names.join(', ')})`}
@@ -215,6 +251,25 @@ export default function PackagesPage() {
           <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
           <Button onClick={handleCreate} variant="contained" disabled={saving || !parentId || !packageType}>
             {saving ? 'Creating...' : 'Create'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={!!deleteTarget} onClose={() => setDeleteTarget(null)} maxWidth="xs" fullWidth>
+        <DialogTitle>Delete Package?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            {deleteTarget
+              ? `Delete package for ${deleteTarget.parent_name}? This keeps session records but unlinks them from this package.`
+              : ''}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteTarget(null)} disabled={deleting}>
+            Cancel
+          </Button>
+          <Button color="error" variant="contained" onClick={handleDeletePackage} disabled={deleting}>
+            {deleting ? 'Deleting...' : 'Delete'}
           </Button>
         </DialogActions>
       </Dialog>

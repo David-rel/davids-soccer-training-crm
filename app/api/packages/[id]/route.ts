@@ -167,13 +167,36 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 }
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let client: Awaited<ReturnType<typeof getClient>> | null = null;
   try {
+    client = await getClient();
     const { id } = await params;
-    const result = await query('DELETE FROM crm_packages WHERE id = $1 RETURNING id', [id]);
-    if (result.rows.length === 0) return errorResponse('Package not found', 404);
+    await client.query('BEGIN');
+
+    const existingResult = await client.query('SELECT id FROM crm_packages WHERE id = $1 FOR UPDATE', [id]);
+    if (existingResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return errorResponse('Package not found', 404);
+    }
+
+    await client.query(
+      `UPDATE crm_sessions
+       SET package_id = NULL, updated_at = CURRENT_TIMESTAMP
+       WHERE package_id = $1`,
+      [id]
+    );
+
+    await client.query('DELETE FROM crm_package_payment_events WHERE package_id = $1', [id]);
+
+    await client.query('DELETE FROM crm_packages WHERE id = $1 RETURNING id', [id]);
+    await client.query('COMMIT');
+
     return jsonResponse({ deleted: true });
   } catch (error) {
+    if (client) await client.query('ROLLBACK');
     console.error('Error deleting package:', error);
     return errorResponse('Failed to delete package');
+  } finally {
+    if (client) client.release();
   }
 }

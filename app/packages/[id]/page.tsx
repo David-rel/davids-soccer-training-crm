@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, use } from 'react';
+import { useRouter } from 'next/navigation';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
@@ -152,6 +153,7 @@ export const dynamic = 'force-dynamic';
 
 export default function PackageDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const [pkg, setPkg] = useState<PackageDetail | null>(null);
   const [players, setPlayers] = useState<PlayerOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -189,6 +191,9 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
   const [editSaving, setEditSaving] = useState(false);
   const [deleteSession, setDeleteSession] = useState<PackageDetail['sessions'][number] | null>(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
+  const [deletePackageOpen, setDeletePackageOpen] = useState(false);
+  const [deletePackageSaving, setDeletePackageSaving] = useState(false);
+  const [sessionStatusSavingId, setSessionStatusSavingId] = useState<number | null>(null);
 
   const fetchPackage = useCallback(async () => {
     const res = await fetch(`/api/packages/${id}`);
@@ -475,6 +480,66 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
     }
   };
 
+  const handleDeletePackage = async () => {
+    setDeletePackageSaving(true);
+    try {
+      const response = await fetch(`/api/packages/${id}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) return;
+      router.push('/packages');
+    } finally {
+      setDeletePackageSaving(false);
+    }
+  };
+
+  const isSessionClosed = (session: PackageDetail['sessions'][number]) => {
+    const status = session.status?.toLowerCase();
+    return (
+      session.cancelled ||
+      status === 'cancelled' ||
+      status === 'completed' ||
+      status === 'no_show' ||
+      session.showed_up !== null
+    );
+  };
+
+  const isPendingCompletion = (session: PackageDetail['sessions'][number]) => {
+    const sessionTime = new Date(session.session_date).getTime();
+    return Number.isFinite(sessionTime) && sessionTime <= Date.now() && !isSessionClosed(session);
+  };
+
+  const handlePackageSessionStatusAction = async (
+    session: PackageDetail['sessions'][number],
+    action: 'complete' | 'cancel'
+  ) => {
+    setSessionStatusSavingId(session.id);
+    try {
+      if (action === 'complete') {
+        const completeResponse = await fetch(`/api/sessions/${session.id}/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            showed_up: true,
+            cancelled: false,
+            was_paid: session.was_paid ?? false,
+            payment_method: session.payment_method ?? null,
+          }),
+        });
+        if (!completeResponse.ok) return;
+      } else {
+        const cancelResponse = await fetch(`/api/sessions/${session.id}/cancel`, {
+          method: 'POST',
+        });
+        if (!cancelResponse.ok) return;
+      }
+
+      await fetchPackage();
+    } finally {
+      setSessionStatusSavingId(null);
+    }
+  };
+
   if (loading) return <Typography>Loading...</Typography>;
   if (!pkg) return <Typography>Package not found.</Typography>;
 
@@ -511,6 +576,9 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
           <Chip label={pkg.is_active ? 'Active' : 'Completed'} color={pkg.is_active ? 'success' : 'default'} />
           <Button size="small" variant="outlined" onClick={toggleActive}>
             {pkg.is_active ? 'Mark Complete' : 'Reactivate'}
+          </Button>
+          <Button size="small" variant="outlined" color="error" onClick={() => setDeletePackageOpen(true)}>
+            Delete Package
           </Button>
         </Box>
       </Box>
@@ -658,65 +726,92 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
           {pkg.sessions.length === 0 ? (
             <Typography color="text.secondary" variant="body2">No sessions booked for this package yet.</Typography>
           ) : (
-            pkg.sessions.map((s) => (
-              <Box
-                key={s.id}
-                sx={{ p: 1.5, bgcolor: 'grey.50', borderRadius: 2, mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}
-              >
-                <Box>
-                  <Typography sx={{ fontWeight: 600 }}>
-                    {formatArizonaDateTime(s.session_date)}
-                  </Typography>
-                  {s.location && (
-                    <Typography variant="body2" color="text.secondary">
-                      {s.location}
-                    </Typography>
-                  )}
-                  {s.player_names && s.player_names.length > 0 && (
-                    <Typography variant="body2" color="text.secondary">
-                      {s.player_names.join(', ')}
-                    </Typography>
-                  )}
-                </Box>
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                  {(() => {
-                    const status = s.status?.toLowerCase();
-                    const sessionTime = new Date(s.session_date).getTime();
-                    const isUpcoming = Number.isFinite(sessionTime) ? sessionTime > Date.now() : false;
+            pkg.sessions.map((s) => {
+              const pendingCompletion = isPendingCompletion(s);
+              const statusActionSaving = sessionStatusSavingId === s.id;
 
-                    if (status && status !== 'scheduled') {
-                      return (
-                        <Chip
-                          label={status.replace('_', ' ')}
-                          color={
-                            status === 'accepted' || status === 'completed'
-                              ? 'success'
-                              : status === 'cancelled' || status === 'no_show'
-                                ? 'error'
-                                : status === 'rescheduled'
-                                  ? 'warning'
-                                  : 'info'
-                          }
+              return (
+                <Box
+                  key={s.id}
+                  sx={{ p: 1.5, bgcolor: 'grey.50', borderRadius: 2, mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}
+                >
+                  <Box>
+                    <Typography sx={{ fontWeight: 600 }}>
+                      {formatArizonaDateTime(s.session_date)}
+                    </Typography>
+                    {s.location && (
+                      <Typography variant="body2" color="text.secondary">
+                        {s.location}
+                      </Typography>
+                    )}
+                    {s.player_names && s.player_names.length > 0 && (
+                      <Typography variant="body2" color="text.secondary">
+                        {s.player_names.join(', ')}
+                      </Typography>
+                    )}
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    {(() => {
+                      const status = s.status?.toLowerCase();
+                      const sessionTime = new Date(s.session_date).getTime();
+                      const isUpcoming = Number.isFinite(sessionTime) ? sessionTime > Date.now() : false;
+
+                      if (status && status !== 'scheduled') {
+                        return (
+                          <Chip
+                            label={status.replace('_', ' ')}
+                            color={
+                              status === 'accepted' || status === 'completed'
+                                ? 'success'
+                                : status === 'cancelled' || status === 'no_show'
+                                  ? 'error'
+                                  : status === 'rescheduled'
+                                    ? 'warning'
+                                    : 'info'
+                            }
+                            size="small"
+                          />
+                        );
+                      }
+
+                      if (s.showed_up === true) return <Chip label="Showed Up" color="success" size="small" />;
+                      if (s.cancelled) return <Chip label="Cancelled" color="error" size="small" />;
+                      if (isUpcoming) return <Chip label="Upcoming" color="info" size="small" />;
+                      return <Chip label="Pending Completion" color="warning" size="small" />;
+                    })()}
+                    {s.was_paid && <Chip label={`Paid (${s.payment_method})`} size="small" variant="outlined" />}
+                    {pendingCompletion && (
+                      <>
+                        <Button
                           size="small"
-                        />
-                      );
-                    }
-
-                    if (s.showed_up === true) return <Chip label="Showed Up" color="success" size="small" />;
-                    if (s.cancelled) return <Chip label="Cancelled" color="error" size="small" />;
-                    if (isUpcoming) return <Chip label="Upcoming" color="info" size="small" />;
-                    return <Chip label="Pending Completion" color="warning" size="small" />;
-                  })()}
-                  {s.was_paid && <Chip label={`Paid (${s.payment_method})`} size="small" variant="outlined" />}
-                  <Button size="small" variant="outlined" onClick={() => openEditDialog(s)}>
-                    Edit
-                  </Button>
-                  <Button size="small" variant="outlined" color="error" onClick={() => setDeleteSession(s)}>
-                    Delete
-                  </Button>
+                          variant="contained"
+                          color="success"
+                          disabled={statusActionSaving}
+                          onClick={() => handlePackageSessionStatusAction(s, 'complete')}
+                        >
+                          Complete
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="error"
+                          disabled={statusActionSaving}
+                          onClick={() => handlePackageSessionStatusAction(s, 'cancel')}
+                        >
+                          Cancel
+                        </Button>
+                      </>
+                    )}
+                    <Button size="small" variant="outlined" onClick={() => openEditDialog(s)}>
+                      Edit
+                    </Button>
+                    <Button size="small" variant="outlined" color="error" onClick={() => setDeleteSession(s)}>
+                      Delete
+                    </Button>
+                  </Box>
                 </Box>
-              </Box>
-            ))
+              );
+            })
           )}
         </CardContent>
       </Card>
@@ -971,6 +1066,23 @@ export default function PackageDetailPage({ params }: { params: Promise<{ id: st
           </Button>
           <Button color="error" variant="contained" onClick={handleDeleteSession} disabled={deleteSaving}>
             {deleteSaving ? 'Deleting...' : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={deletePackageOpen} onClose={() => setDeletePackageOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Delete Package?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            Deleting this package keeps session history but removes package linkage.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeletePackageOpen(false)} disabled={deletePackageSaving}>
+            Cancel
+          </Button>
+          <Button color="error" variant="contained" onClick={handleDeletePackage} disabled={deletePackageSaving}>
+            {deletePackageSaving ? 'Deleting...' : 'Delete Package'}
           </Button>
         </DialogActions>
       </Dialog>

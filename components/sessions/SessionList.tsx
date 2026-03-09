@@ -359,8 +359,12 @@ export default function SessionList() {
     .filter((s) => new Date(s.session_date) > now && !isClosedSession(s))
     .sort((a, b) => new Date(a.session_date).getTime() - new Date(b.session_date).getTime()); // Earliest first
 
+  const pendingCompletionSessions = allSessions
+    .filter((s) => new Date(s.session_date) <= now && !isClosedSession(s))
+    .sort((a, b) => new Date(b.session_date).getTime() - new Date(a.session_date).getTime()); // Most recent first
+
   const pastSessions = allSessions
-    .filter((s) => new Date(s.session_date) <= now || isClosedSession(s))
+    .filter((s) => isClosedSession(s))
     .sort((a, b) => new Date(b.session_date).getTime() - new Date(a.session_date).getTime()); // Most recent first
 
   if (loading) return <Typography color="text.secondary">Loading...</Typography>;
@@ -527,6 +531,18 @@ export default function SessionList() {
           </Typography>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             {upcomingSessions.map((session) => renderSession(session))}
+          </Box>
+        </Box>
+      )}
+
+      {/* Pending Completion */}
+      {pendingCompletionSessions.length > 0 && (
+        <Box sx={{ mb: 4 }}>
+          <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
+            Pending Completion ({pendingCompletionSessions.length})
+          </Typography>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            {pendingCompletionSessions.map((session) => renderSession(session))}
           </Box>
         </Box>
       )}
