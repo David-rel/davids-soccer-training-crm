@@ -102,6 +102,10 @@ interface GoogleSyncOptions {
   sendUpdates?: GoogleSendUpdatesMode;
 }
 
+interface AccessTokenOptions {
+  disallowOauthFallback?: boolean;
+}
+
 function parseCalendarIdList(raw: string | undefined): string[] {
   return (raw || '')
     .split(',')
@@ -219,14 +223,23 @@ function getOauthClient(auth: Extract<GoogleAuthConfig, { kind: 'oauth_user' }>)
   return oauthClient;
 }
 
-async function getAccessToken(config: GoogleCalendarConfig): Promise<string> {
+async function getAccessToken(
+  config: GoogleCalendarConfig,
+  options: AccessTokenOptions = {}
+): Promise<string> {
   let tokenResponse: string | { token?: string | null } | null;
+  const disallowOauthFallback = options.disallowOauthFallback === true;
 
   if (config.auth.kind === 'oauth_user' && !forceServiceAccountFallback) {
     try {
       tokenResponse = await getOauthClient(config.auth).getAccessToken();
     } catch (error) {
       if (!isInvalidGrantError(error)) throw error;
+      if (disallowOauthFallback) {
+        throw new Error(
+          'Google OAuth refresh token is invalid. Guest email updates require OAuth. Renew GOOGLE_OAUTH_REFRESH_TOKEN.'
+        );
+      }
 
       const serviceFallback = getServiceAccountAuthFromEnv();
       if (!serviceFallback) throw error;
@@ -481,9 +494,10 @@ async function googleCalendarRequest<T>(
   config: GoogleCalendarConfig,
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
+  accessTokenOptions: AccessTokenOptions = {}
 ): Promise<T> {
-  const token = await getAccessToken(config);
+  const token = await getAccessToken(config, accessTokenOptions);
   const response = await fetch(`${GOOGLE_CALENDAR_API_BASE}${path}`, {
     method,
     headers: {
@@ -730,7 +744,8 @@ async function createEvent(
     config,
     'POST',
     withSendUpdates(`/calendars/${encodeURIComponent(calendarId)}/events`, sendUpdates),
-    payload
+    payload,
+    { disallowOauthFallback: sendUpdates === 'all' }
   );
 
   if (!response.id) {
@@ -754,7 +769,8 @@ async function updateEvent(
       `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
       sendUpdates
     ),
-    payload
+    payload,
+    { disallowOauthFallback: sendUpdates === 'all' }
   );
 }
 
@@ -770,7 +786,9 @@ async function deleteEvent(
     withSendUpdates(
       `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
       sendUpdates
-    )
+    ),
+    undefined,
+    { disallowOauthFallback: sendUpdates === 'all' }
   );
 }
 
@@ -789,6 +807,7 @@ async function syncEventOnCalendar(
       await upsertMapping(session.id, calendarId, googleEventId);
     } catch (error) {
       if (!isAttendeePermissionError(error) || !('attendees' in payload)) throw error;
+      if (sendUpdates === 'all') throw error;
       const fallbackEventId = await createEvent(
         config,
         calendarId,
@@ -805,6 +824,7 @@ async function syncEventOnCalendar(
     await upsertMapping(session.id, calendarId, mapping.google_event_id);
   } catch (error) {
     if (isAttendeePermissionError(error) && 'attendees' in payload) {
+      if (sendUpdates === 'all') throw error;
       await updateEvent(
         config,
         calendarId,
@@ -822,6 +842,7 @@ async function syncEventOnCalendar(
       await upsertMapping(session.id, calendarId, googleEventId);
     } catch (createError) {
       if (!isAttendeePermissionError(createError) || !('attendees' in payload)) throw createError;
+      if (sendUpdates === 'all') throw createError;
       const fallbackEventId = await createEvent(
         config,
         calendarId,
@@ -848,6 +869,7 @@ async function syncFirstSessionEventOnCalendar(
       await upsertFirstSessionMapping(firstSession.id, calendarId, googleEventId);
     } catch (error) {
       if (!isAttendeePermissionError(error) || !('attendees' in payload)) throw error;
+      if (sendUpdates === 'all') throw error;
       const fallbackEventId = await createEvent(
         config,
         calendarId,
@@ -864,6 +886,7 @@ async function syncFirstSessionEventOnCalendar(
     await upsertFirstSessionMapping(firstSession.id, calendarId, mapping.google_event_id);
   } catch (error) {
     if (isAttendeePermissionError(error) && 'attendees' in payload) {
+      if (sendUpdates === 'all') throw error;
       await updateEvent(
         config,
         calendarId,
@@ -881,6 +904,7 @@ async function syncFirstSessionEventOnCalendar(
       await upsertFirstSessionMapping(firstSession.id, calendarId, googleEventId);
     } catch (createError) {
       if (!isAttendeePermissionError(createError) || !('attendees' in payload)) throw createError;
+      if (sendUpdates === 'all') throw createError;
       const fallbackEventId = await createEvent(
         config,
         calendarId,
