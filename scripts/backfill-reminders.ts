@@ -15,7 +15,7 @@ async function backfillReminders() {
 
     // 1. Find scheduled first sessions with no session reminders
     const firstSessions = await query(`
-      SELECT fs.id, fs.parent_id, fs.session_date, p.name
+      SELECT fs.id, fs.parent_id, fs.session_date, fs.session_end_date, p.name
       FROM crm_first_sessions fs
       JOIN crm_parents p ON p.id = fs.parent_id
       WHERE fs.status = 'scheduled'
@@ -41,6 +41,7 @@ async function backfillReminders() {
     for (const fs of firstSessions.rows) {
       await createSessionReminders(fs.parent_id, fs.session_date, {
         firstSessionId: fs.id,
+        sessionEndDate: fs.session_end_date,
       });
       console.log(
         `  ✅ ${fs.name} — first session on ${new Date(fs.session_date).toLocaleDateString()}`
@@ -49,7 +50,7 @@ async function backfillReminders() {
 
     // 2. Find scheduled regular sessions with no session reminders
     const sessions = await query(`
-      SELECT s.id, s.parent_id, s.session_date, p.name
+      SELECT s.id, s.parent_id, s.session_date, s.session_end_date, p.name
       FROM crm_sessions s
       JOIN crm_parents p ON p.id = s.parent_id
       WHERE s.status = 'scheduled'
@@ -75,6 +76,7 @@ async function backfillReminders() {
     for (const s of sessions.rows) {
       await createSessionReminders(s.parent_id, s.session_date, {
         sessionId: s.id,
+        sessionEndDate: s.session_end_date,
       });
       console.log(
         `  ✅ ${s.name} — session on ${new Date(s.session_date).toLocaleDateString()}`

@@ -131,7 +131,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Create 48h, 24h, 6h reminders (use the UTC date)
-    await createSessionReminders(parent_id, sessionDateUTC, { sessionId: session.id });
+    await createSessionReminders(parent_id, sessionDateUTC, {
+      sessionId: session.id,
+      sessionEndDate: sessionEndDateUTC,
+    });
 
     // Update parent's last activity timestamp
     await query(

@@ -40,7 +40,7 @@ const reminderTypeLabels: Record<string, string> = {
   session_start: 'At session time',
   coach_session_start: 'Coach at start',
   coach_session_plus_60m: 'Coach +60m',
-  parent_session_plus_120m: 'Parent +120m',
+  parent_session_plus_120m: 'Parent +3h after end',
   follow_up_1d: 'Day 1',
   follow_up_3d: 'Day 3',
   follow_up_7d: 'Day 7',

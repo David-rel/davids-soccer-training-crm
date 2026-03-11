@@ -31,7 +31,7 @@ export const SESSION_REMINDER_TYPE_LABELS: Record<string, string> = {
   session_start: "At session start (parent)",
   coach_session_start: "At session start (coach)",
   coach_session_plus_60m: "60 minutes after start (coach)",
-  parent_session_plus_120m: "120 minutes after start (parent)",
+  parent_session_plus_120m: "180 minutes after end (parent)",
 };
 
 export const SESSION_REMINDER_DEFAULT_TEMPLATES: Record<string, string> = {

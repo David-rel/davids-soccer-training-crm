@@ -78,6 +78,7 @@ export async function POST(request: Request) {
 
     const results = {
       sessionRemindersCreated: 0,
+      sessionRemindersAdjusted: 0,
       coldLeadRemindersCreated: 0,
       staleRemindersDeleted: 0,
       details: {
@@ -91,9 +92,44 @@ export async function POST(request: Request) {
     // 1. SESSION REMINDERS - Ensure all upcoming sessions have reminders
     // ============================================
 
+    // Keep existing unsent parent follow-up reminders aligned to 3 hours after end.
+    const adjustedRegularSessionParentFollowUps = await query(`
+      UPDATE crm_reminders r
+      SET due_at = COALESCE(s.session_end_date, s.session_date + INTERVAL '60 minutes') + INTERVAL '180 minutes'
+      FROM crm_sessions s
+      JOIN crm_parents p ON p.id = s.parent_id
+      WHERE r.session_id = s.id
+        AND r.reminder_category = 'session_reminder'
+        AND r.reminder_type = 'parent_session_plus_120m'
+        AND r.sent = false
+        AND COALESCE(p.is_dead, false) = false
+        AND (s.status IS NULL OR s.status NOT IN ('cancelled', 'completed', 'no_show'))
+        AND s.session_date > NOW()
+        AND r.due_at <> COALESCE(s.session_end_date, s.session_date + INTERVAL '60 minutes') + INTERVAL '180 minutes'
+      RETURNING r.id
+    `);
+    results.sessionRemindersAdjusted += adjustedRegularSessionParentFollowUps.rowCount || 0;
+
+    const adjustedFirstSessionParentFollowUps = await query(`
+      UPDATE crm_reminders r
+      SET due_at = COALESCE(fs.session_end_date, fs.session_date + INTERVAL '60 minutes') + INTERVAL '180 minutes'
+      FROM crm_first_sessions fs
+      JOIN crm_parents p ON p.id = fs.parent_id
+      WHERE r.first_session_id = fs.id
+        AND r.reminder_category = 'session_reminder'
+        AND r.reminder_type = 'parent_session_plus_120m'
+        AND r.sent = false
+        AND COALESCE(p.is_dead, false) = false
+        AND (fs.status IS NULL OR fs.status NOT IN ('cancelled', 'completed', 'no_show'))
+        AND fs.session_date > NOW()
+        AND r.due_at <> COALESCE(fs.session_end_date, fs.session_date + INTERVAL '60 minutes') + INTERVAL '180 minutes'
+      RETURNING r.id
+    `);
+    results.sessionRemindersAdjusted += adjustedFirstSessionParentFollowUps.rowCount || 0;
+
     // First sessions missing reminders
     const firstSessionsMissingReminders = await query(`
-      SELECT fs.id, fs.parent_id, fs.session_date, p.name
+      SELECT fs.id, fs.parent_id, fs.session_date, fs.session_end_date, p.name
       FROM crm_first_sessions fs
       JOIN crm_parents p ON p.id = fs.parent_id
       WHERE (fs.status IS NULL OR fs.status NOT IN ('cancelled', 'completed', 'no_show'))
@@ -116,13 +152,16 @@ export async function POST(request: Request) {
     results.details.firstSessionsChecked = firstSessionsMissingReminders.rows.length;
 
     for (const fs of firstSessionsMissingReminders.rows) {
-      const created = await createSessionReminders(fs.parent_id, fs.session_date, { firstSessionId: fs.id });
+      const created = await createSessionReminders(fs.parent_id, fs.session_date, {
+        firstSessionId: fs.id,
+        sessionEndDate: fs.session_end_date,
+      });
       results.sessionRemindersCreated += created;
     }
 
     // Regular sessions missing reminders
     const sessionsMissingReminders = await query(`
-      SELECT s.id, s.parent_id, s.session_date, p.name
+      SELECT s.id, s.parent_id, s.session_date, s.session_end_date, p.name
       FROM crm_sessions s
       JOIN crm_parents p ON p.id = s.parent_id
       WHERE (s.status IS NULL OR s.status NOT IN ('cancelled', 'completed', 'no_show'))
@@ -145,7 +184,10 @@ export async function POST(request: Request) {
     results.details.sessionsChecked = sessionsMissingReminders.rows.length;
 
     for (const s of sessionsMissingReminders.rows) {
-      const created = await createSessionReminders(s.parent_id, s.session_date, { sessionId: s.id });
+      const created = await createSessionReminders(s.parent_id, s.session_date, {
+        sessionId: s.id,
+        sessionEndDate: s.session_end_date,
+      });
       results.sessionRemindersCreated += created;
     }
 

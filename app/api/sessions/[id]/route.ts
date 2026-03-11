@@ -38,7 +38,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const { id } = await params;
     const body = await request.json();
     const shouldRefreshSessionReminders =
-      typeof body.session_date === 'string' && body.session_date.trim().length > 0;
+      (typeof body.session_date === 'string' && body.session_date.trim().length > 0) ||
+      Object.prototype.hasOwnProperty.call(body, 'session_end_date');
 
     const existingResult = await query(
       `SELECT s.id, s.session_date, s.session_end_date, s.guest_emails, p.email as parent_email
@@ -162,7 +163,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         [session.id]
       );
 
-      await createSessionReminders(session.parent_id, session.session_date, { sessionId: session.id });
+      await createSessionReminders(session.parent_id, session.session_date, {
+        sessionId: session.id,
+        sessionEndDate: session.session_end_date,
+      });
     }
 
     await syncSessionToGoogleCalendarsSafe(session.id, 'session patch');

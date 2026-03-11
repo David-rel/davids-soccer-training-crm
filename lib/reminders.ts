@@ -50,7 +50,7 @@ export const SESSION_REMINDER_INTERVALS = [
   { type: "session_start", offsetMinutes: 0 },
   { type: "coach_session_start", offsetMinutes: 0 },
   { type: "coach_session_plus_60m", offsetMinutes: 60 },
-  { type: "parent_session_plus_120m", offsetMinutes: 120 },
+  { type: "parent_session_plus_120m", offsetMinutes: 180 },
 ] as const;
 
 export const SESSION_REMINDER_TYPES = SESSION_REMINDER_INTERVALS.map(
@@ -62,16 +62,27 @@ export type SessionReminderType = (typeof SESSION_REMINDER_INTERVALS)[number]["t
 export async function createSessionReminders(
   parentId: number,
   sessionDate: string | Date,
-  opts: { firstSessionId?: number; sessionId?: number }
+  opts: { firstSessionId?: number; sessionId?: number; sessionEndDate?: string | Date | null }
 ) {
   // Session times are stored as UTC-coded values. Keep reminder offsets in UTC math
   // so 48h/24h/6h always align with the actual session instant in production.
   const sessionDateUtc = normalizeToUtcDate(sessionDate);
+  const sessionEndDateRaw = opts.sessionEndDate
+    ? normalizeToUtcDate(opts.sessionEndDate)
+    : new Date(sessionDateUtc.getTime() + 60 * 60 * 1000);
+  const sessionEndDateUtc =
+    sessionEndDateRaw.getTime() > sessionDateUtc.getTime()
+      ? sessionEndDateRaw
+      : new Date(sessionDateUtc.getTime() + 60 * 60 * 1000);
   let createdCount = 0;
 
   for (const interval of SESSION_REMINDER_INTERVALS) {
+    const anchorUtc =
+      interval.type === "parent_session_plus_120m"
+        ? sessionEndDateUtc
+        : sessionDateUtc;
     const dueAtUtc = new Date(
-      sessionDateUtc.getTime() + interval.offsetMinutes * 60 * 1000
+      anchorUtc.getTime() + interval.offsetMinutes * 60 * 1000
     );
 
     const insertResult = await query(
