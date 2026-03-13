@@ -34,7 +34,7 @@ interface CalendarEvent {
   title: string;
   start: Date;
   end: Date;
-  type: "call" | "first_session" | "session" | "reminder";
+  type: "call" | "first_session" | "session" | "group_session" | "reminder";
   resource?: {
     parent_name?: string;
     player_names?: string[];
@@ -42,6 +42,10 @@ interface CalendarEvent {
     status?: string;
     reminder_type?: string;
     notes?: string;
+    price?: number | null;
+    player_count?: number;
+    prospect_count?: number;
+    max_players?: number;
     originalStart?: Date;
     originalEnd?: Date;
   };
@@ -71,6 +75,18 @@ interface DashboardData {
     session_end_date?: string | null;
     location?: string;
     status?: string;
+  }>;
+  upcomingGroupSessions: Array<{
+    id: number;
+    title: string;
+    description?: string | null;
+    session_date: string;
+    session_date_end?: string | null;
+    location?: string | null;
+    price?: number | null;
+    max_players?: number;
+    player_count?: number;
+    prospect_count?: number;
   }>;
   upcomingReminders: Array<{
     id: number;
@@ -154,10 +170,11 @@ export default function CalendarView() {
         // Keep timestamps exact (no ms hacks), sort in-memory instead.
         const SORT_PRIORITY: Record<string, number> = {
           session: 0,
-          first_session: 1,
-          call: 2,
-          session_reminder: 3,
-          follow_up_reminder: 4,
+          group_session: 1,
+          first_session: 2,
+          call: 3,
+          session_reminder: 4,
+          follow_up_reminder: 5,
         };
 
         const getSortKey = (type: string, reminderType?: string): string => {
@@ -233,6 +250,30 @@ export default function CalendarView() {
           });
         });
 
+        data.upcomingGroupSessions?.forEach((session) => {
+          const startDate = toCalendarDate(session.session_date);
+          const endDate = session.session_date_end
+            ? toCalendarDate(session.session_date_end)
+            : new Date(startDate.getTime() + 60 * 60000);
+          calendarEvents.push({
+            id: `group-session-${session.id}`,
+            title: session.title,
+            start: startDate,
+            end: endDate,
+            type: "group_session",
+            resource: {
+              location: session.location || undefined,
+              notes: session.description || undefined,
+              price: session.price ?? null,
+              player_count: session.player_count ?? 0,
+              prospect_count: session.prospect_count ?? 0,
+              max_players: session.max_players ?? 0,
+              originalStart: startDate,
+              originalEnd: endDate,
+            },
+          });
+        });
+
         // Add ALL reminders for calendar
         data.upcomingReminders?.forEach((reminder) => {
           const dueDate = toCalendarDate(reminder.due_at);
@@ -290,6 +331,9 @@ export default function CalendarView() {
       case "session":
         backgroundColor = "#4caf50"; // Green
         break;
+      case "group_session":
+        backgroundColor = "#f4511e"; // Deep orange
+        break;
       case "reminder":
         // Session reminders (48h, 24h, 6h) = Purple
         // Follow-up reminders (1d, 3d, 7d, 14d) = Blue
@@ -328,6 +372,8 @@ export default function CalendarView() {
         return "⭐ First Session";
       case "session":
         return "⚽ Training Session";
+      case "group_session":
+        return "🟧 Group Session";
       case "reminder":
         return "💬 Reminder";
       default:
@@ -397,6 +443,19 @@ export default function CalendarView() {
               />
               <Typography variant="body2" color="text.secondary">
                 Session
+              </Typography>
+            </Box>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+              <Box
+                sx={{
+                  width: 14,
+                  height: 14,
+                  borderRadius: "4px",
+                  bgcolor: "#f4511e",
+                }}
+              />
+              <Typography variant="body2" color="text.secondary">
+                Group session
               </Typography>
             </Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
@@ -535,6 +594,8 @@ export default function CalendarView() {
                     color={
                       selectedEvent.type === "call"
                         ? "error"
+                        : selectedEvent.type === "group_session"
+                        ? "warning"
                         : selectedEvent.type === "first_session"
                         ? "warning"
                         : selectedEvent.type === "session"
@@ -603,6 +664,35 @@ export default function CalendarView() {
                       </Typography>
                     </Box>
                   )}
+
+                  {selectedEvent.type === "group_session" && (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        Signups
+                      </Typography>
+                      <Typography variant="body1">
+                        {selectedEvent.resource?.player_count ?? 0}
+                        {selectedEvent.resource?.max_players
+                          ? ` / ${selectedEvent.resource.max_players} paid`
+                          : " paid"}
+                        {typeof selectedEvent.resource?.prospect_count === "number"
+                          ? `, ${selectedEvent.resource.prospect_count} prospect`
+                          : ""}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {selectedEvent.type === "group_session" &&
+                    typeof selectedEvent.resource?.price === "number" && (
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Price
+                        </Typography>
+                        <Typography variant="body1">
+                          ${selectedEvent.resource.price}
+                        </Typography>
+                      </Box>
+                    )}
 
                   {selectedEvent.resource?.status && (
                     <Box>

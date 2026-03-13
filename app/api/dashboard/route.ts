@@ -229,6 +229,19 @@ export async function GET(request: NextRequest) {
       [todayStart, futureDateStr]
     );
 
+    const upcomingGroupSessionsResult = await query(
+      `SELECT
+        gs.*,
+        COUNT(ps.id) FILTER (WHERE ps.has_paid = true)::int AS player_count,
+        COUNT(ps.id) FILTER (WHERE COALESCE(ps.has_paid, false) = false)::int AS prospect_count
+       FROM group_sessions gs
+       LEFT JOIN player_signups ps ON ps.group_session_id = gs.id
+       WHERE gs.session_date >= $1 AND gs.session_date <= $2
+       GROUP BY gs.id
+       ORDER BY gs.session_date`,
+      [todayStart, futureDateStr]
+    );
+
     // ALL reminders for calendar (next 3 months) — include secondary parent in display name
     const allRemindersResult = await query(
       `
@@ -280,6 +293,7 @@ export async function GET(request: NextRequest) {
       upcomingCalls: upcomingCallsResult.rows,
       upcomingFirstSessions: upcomingFirstSessionsResult.rows,
       upcomingSessions: upcomingSessionsResult.rows,
+      upcomingGroupSessions: upcomingGroupSessionsResult.rows,
       upcomingReminders: allRemindersResult.rows,
     });
   } catch (error) {
