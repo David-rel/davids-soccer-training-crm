@@ -97,6 +97,7 @@ interface GoogleSessionEventMapping {
 
 interface GoogleCalendarEventResponse {
   id?: string;
+  status?: string;
 }
 
 interface GoogleCalendarEventListResponse {
@@ -986,6 +987,18 @@ async function deleteEvent(
   );
 }
 
+async function getEvent(
+  config: GoogleCalendarConfig,
+  calendarId: string,
+  eventId: string
+): Promise<GoogleCalendarEventResponse> {
+  return googleCalendarRequest<GoogleCalendarEventResponse>(
+    config,
+    'GET',
+    `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
+  );
+}
+
 async function syncEventOnCalendar(
   session: SessionSyncRow,
   config: GoogleCalendarConfig,
@@ -996,6 +1009,33 @@ async function syncEventOnCalendar(
   const mapping = await getSessionMapping(session.id, calendarId);
 
   if (!mapping) {
+    try {
+      const googleEventId = await createEvent(config, calendarId, payload, sendUpdates);
+      await upsertMapping(session.id, calendarId, googleEventId);
+    } catch (error) {
+      if (!isAttendeePermissionError(error) || !('attendees' in payload)) throw error;
+      if (sendUpdates === 'all') throw error;
+      const fallbackEventId = await createEvent(
+        config,
+        calendarId,
+        withoutAttendees(payload),
+        sendUpdates
+      );
+      await upsertMapping(session.id, calendarId, fallbackEventId);
+    }
+    return;
+  }
+
+  let shouldRecreateFromMapping = false;
+  try {
+    const existingEvent = await getEvent(config, calendarId, mapping.google_event_id);
+    shouldRecreateFromMapping = existingEvent.status === 'cancelled';
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+    shouldRecreateFromMapping = true;
+  }
+
+  if (shouldRecreateFromMapping) {
     try {
       const googleEventId = await createEvent(config, calendarId, payload, sendUpdates);
       await upsertMapping(session.id, calendarId, googleEventId);
@@ -1075,6 +1115,33 @@ async function syncFirstSessionEventOnCalendar(
     return;
   }
 
+  let shouldRecreateFromMapping = false;
+  try {
+    const existingEvent = await getEvent(config, calendarId, mapping.google_event_id);
+    shouldRecreateFromMapping = existingEvent.status === 'cancelled';
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+    shouldRecreateFromMapping = true;
+  }
+
+  if (shouldRecreateFromMapping) {
+    try {
+      const googleEventId = await createEvent(config, calendarId, payload, sendUpdates);
+      await upsertFirstSessionMapping(firstSession.id, calendarId, googleEventId);
+    } catch (error) {
+      if (!isAttendeePermissionError(error) || !('attendees' in payload)) throw error;
+      if (sendUpdates === 'all') throw error;
+      const fallbackEventId = await createEvent(
+        config,
+        calendarId,
+        withoutAttendees(payload),
+        sendUpdates
+      );
+      await upsertFirstSessionMapping(firstSession.id, calendarId, fallbackEventId);
+    }
+    return;
+  }
+
   try {
     await updateEvent(config, calendarId, mapping.google_event_id, payload, sendUpdates);
     await upsertFirstSessionMapping(firstSession.id, calendarId, mapping.google_event_id);
@@ -1119,6 +1186,21 @@ async function syncGroupSessionEventOnCalendar(
   const mapping = await getGroupSessionMapping(groupSession.id, calendarId);
 
   if (!mapping) {
+    const googleEventId = await createEvent(config, calendarId, payload, 'none');
+    await upsertGroupSessionMapping(groupSession.id, calendarId, googleEventId);
+    return;
+  }
+
+  let shouldRecreateFromMapping = false;
+  try {
+    const existingEvent = await getEvent(config, calendarId, mapping.google_event_id);
+    shouldRecreateFromMapping = existingEvent.status === 'cancelled';
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+    shouldRecreateFromMapping = true;
+  }
+
+  if (shouldRecreateFromMapping) {
     const googleEventId = await createEvent(config, calendarId, payload, 'none');
     await upsertGroupSessionMapping(groupSession.id, calendarId, googleEventId);
     return;
