@@ -6,6 +6,9 @@ import { ensureSessionCalendarColumns, parseGuestEmails } from '@/lib/session-ca
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar';
 const GOOGLE_CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
 const ARIZONA_TIMEZONE = 'America/Phoenix';
+const GOOGLE_EVENT_SUMMARY_MAX = 1024;
+const GOOGLE_EVENT_LOCATION_MAX = 1024;
+const GOOGLE_EVENT_DESCRIPTION_MAX = 8192;
 const DEFAULT_GROUP_CALENDAR_ID =
   '8b987ac6ab05468d001f9856f8a62b4f58634a27a3d6570142380551cfed3125@group.calendar.google.com';
 
@@ -477,6 +480,17 @@ function getTargetCalendarId(session: SessionSyncRow, config: GoogleCalendarConf
   return session.package_id ? config.packageCalendarId : config.privateCalendarId;
 }
 
+function truncateGoogleField(value: string | null | undefined, maxLength: number): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  if (normalized.length <= maxLength) return normalized;
+
+  const suffix = ' ... [truncated]';
+  if (maxLength <= suffix.length) return normalized.slice(0, maxLength);
+  return `${normalized.slice(0, maxLength - suffix.length)}${suffix}`;
+}
+
 function buildGoogleEventPayload(session: SessionSyncRow): Record<string, unknown> {
   if (!session.start_arizona_local || !session.end_arizona_local) {
     throw new Error(`Missing Arizona-local datetime fields for session ${session.id}`);
@@ -496,14 +510,18 @@ function buildGoogleEventPayload(session: SessionSyncRow): Record<string, unknow
   }
 
   const attendeeEmails = parseGuestEmails(session.guest_emails || []).emails;
-  const summary = session.title?.trim()
-    ? session.title.trim()
+  const rawSummary = session.title?.trim()
+    ? session.title
     : `${sessionType}: ${session.parent_name}`;
+  const summary =
+    truncateGoogleField(rawSummary, GOOGLE_EVENT_SUMMARY_MAX) || `${sessionType}: ${session.parent_name}`;
+  const description = truncateGoogleField(details.join('\n'), GOOGLE_EVENT_DESCRIPTION_MAX);
+  const location = truncateGoogleField(session.location, GOOGLE_EVENT_LOCATION_MAX);
 
   return {
     summary,
-    description: details.join('\n'),
-    location: session.location || undefined,
+    description,
+    location,
     start: {
       dateTime: session.start_arizona_local,
       timeZone: ARIZONA_TIMEZONE,
@@ -538,14 +556,19 @@ function buildFirstSessionGoogleEventPayload(firstSession: FirstSessionSyncRow):
     ...(firstSession.parent_email ? [firstSession.parent_email] : []),
   ];
   const attendeeEmails = parseGuestEmails(attendeeCandidates).emails;
-  const summary = firstSession.title?.trim()
-    ? firstSession.title.trim()
+  const rawSummary = firstSession.title?.trim()
+    ? firstSession.title
     : `First Session: ${firstSession.parent_name}`;
+  const summary =
+    truncateGoogleField(rawSummary, GOOGLE_EVENT_SUMMARY_MAX) ||
+    `First Session: ${firstSession.parent_name}`;
+  const description = truncateGoogleField(details.join('\n'), GOOGLE_EVENT_DESCRIPTION_MAX);
+  const location = truncateGoogleField(firstSession.location, GOOGLE_EVENT_LOCATION_MAX);
 
   return {
     summary,
-    description: details.join('\n'),
-    location: firstSession.location || undefined,
+    description,
+    location,
     start: {
       dateTime: firstSession.start_arizona_local,
       timeZone: ARIZONA_TIMEZONE,
@@ -582,9 +605,11 @@ function buildGroupSessionGoogleEventPayload(groupSession: GroupSessionSyncRow):
   }
 
   return {
-    summary: groupSession.title.trim(),
-    description: details.join('\n'),
-    location: groupSession.location || undefined,
+    summary:
+      truncateGoogleField(groupSession.title, GOOGLE_EVENT_SUMMARY_MAX) ||
+      `Group Session ${groupSession.id}`,
+    description: truncateGoogleField(details.join('\n'), GOOGLE_EVENT_DESCRIPTION_MAX),
+    location: truncateGoogleField(groupSession.location, GOOGLE_EVENT_LOCATION_MAX),
     start: {
       dateTime: groupSession.start_arizona_local,
       timeZone: ARIZONA_TIMEZONE,
@@ -1172,6 +1197,27 @@ async function removeGroupSessionMappingsFromOtherCalendars(
   }
 }
 
+async function runWithRetries(
+  operation: () => Promise<void>,
+  maxAttempts = 3
+): Promise<void> {
+  let attempt = 0;
+
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      await operation();
+      return;
+    } catch (error) {
+      if (attempt >= maxAttempts) throw error;
+      const delayMs = 250 * attempt;
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, delayMs);
+      });
+    }
+  }
+}
+
 export async function syncSessionToGoogleCalendars(
   sessionId: string | number,
   options: GoogleSyncOptions = {}
@@ -1236,7 +1282,7 @@ export async function syncSessionToGoogleCalendarsSafe(
   options: GoogleSyncOptions = {}
 ): Promise<void> {
   try {
-    await syncSessionToGoogleCalendars(sessionId, options);
+    await runWithRetries(() => syncSessionToGoogleCalendars(sessionId, options));
   } catch (error) {
     console.error(`Google Calendar sync failed (${context})`, {
       sessionId,
@@ -1251,7 +1297,7 @@ export async function removeSessionFromGoogleCalendarsSafe(
   options: GoogleSyncOptions = {}
 ): Promise<void> {
   try {
-    await removeSessionFromGoogleCalendars(sessionId, options);
+    await runWithRetries(() => removeSessionFromGoogleCalendars(sessionId, options));
   } catch (error) {
     console.error(`Google Calendar removal failed (${context})`, {
       sessionId,
@@ -1332,7 +1378,7 @@ export async function syncFirstSessionToGoogleCalendarsSafe(
   options: GoogleSyncOptions = {}
 ): Promise<void> {
   try {
-    await syncFirstSessionToGoogleCalendars(firstSessionId, options);
+    await runWithRetries(() => syncFirstSessionToGoogleCalendars(firstSessionId, options));
   } catch (error) {
     console.error(`Google Calendar first-session sync failed (${context})`, {
       firstSessionId,
@@ -1347,7 +1393,7 @@ export async function removeFirstSessionFromGoogleCalendarsSafe(
   options: GoogleSyncOptions = {}
 ): Promise<void> {
   try {
-    await removeFirstSessionFromGoogleCalendars(firstSessionId, options);
+    await runWithRetries(() => removeFirstSessionFromGoogleCalendars(firstSessionId, options));
   } catch (error) {
     console.error(`Google Calendar first-session removal failed (${context})`, {
       firstSessionId,
@@ -1407,7 +1453,7 @@ export async function syncGroupSessionToGoogleCalendarsSafe(
   context: string
 ): Promise<void> {
   try {
-    await syncGroupSessionToGoogleCalendars(groupSessionId);
+    await runWithRetries(() => syncGroupSessionToGoogleCalendars(groupSessionId));
   } catch (error) {
     console.error(`Google Calendar group-session sync failed (${context})`, {
       groupSessionId,
@@ -1421,7 +1467,7 @@ export async function removeGroupSessionFromGoogleCalendarsSafe(
   context: string
 ): Promise<void> {
   try {
-    await removeGroupSessionFromGoogleCalendars(groupSessionId);
+    await runWithRetries(() => removeGroupSessionFromGoogleCalendars(groupSessionId));
   } catch (error) {
     console.error(`Google Calendar group-session removal failed (${context})`, {
       groupSessionId,
