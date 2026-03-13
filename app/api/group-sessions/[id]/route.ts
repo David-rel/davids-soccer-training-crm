@@ -1,6 +1,10 @@
 import { NextRequest } from 'next/server';
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
+import {
+  removeGroupSessionFromGoogleCalendarsSafe,
+  syncGroupSessionToGoogleCalendarsSafe,
+} from '@/lib/google-calendar';
 import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -226,6 +230,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     if (result.rows.length === 0) return errorResponse('Group session not found', 404);
 
+    await syncGroupSessionToGoogleCalendarsSafe(id, 'group session update');
+
     const groupSession = await getGroupSession(id);
     return jsonResponse(groupSession);
   } catch (error) {
@@ -237,6 +243,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
+    await removeGroupSessionFromGoogleCalendarsSafe(id, 'group session delete');
     const result = await query('DELETE FROM group_sessions WHERE id = $1 RETURNING id', [id]);
 
     if (result.rows.length === 0) return errorResponse('Group session not found', 404);

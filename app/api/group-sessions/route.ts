@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
+import { syncGroupSessionToGoogleCalendarsSafe } from '@/lib/google-calendar';
 import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -137,9 +138,12 @@ export async function POST(request: NextRequest) {
       ]
     );
 
+    const createdGroupSession = result.rows[0] as GroupSessionRow;
+    await syncGroupSessionToGoogleCalendarsSafe(createdGroupSession.id, 'group session create');
+
     return jsonResponse(
       mapGroupSession({
-        ...(result.rows[0] as GroupSessionRow),
+        ...createdGroupSession,
         player_count: 0,
         prospect_count: 0,
       }),

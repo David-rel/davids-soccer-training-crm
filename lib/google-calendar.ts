@@ -6,6 +6,8 @@ import { ensureSessionCalendarColumns, parseGuestEmails } from '@/lib/session-ca
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar';
 const GOOGLE_CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
 const ARIZONA_TIMEZONE = 'America/Phoenix';
+const DEFAULT_GROUP_CALENDAR_ID =
+  '8b987ac6ab05468d001f9856f8a62b4f58634a27a3d6570142380551cfed3125@group.calendar.google.com';
 
 let jwtClient: JWT | null = null;
 let oauthClient: OAuth2Client | null = null;
@@ -31,6 +33,7 @@ type GoogleAuthConfig =
 interface GoogleCalendarConfig {
   privateCalendarId: string;
   packageCalendarId: string;
+  groupCalendarId: string;
   managedCalendarIds: string[];
   auth: GoogleAuthConfig;
 }
@@ -67,6 +70,21 @@ interface FirstSessionSyncRow {
   guest_emails: string[] | null;
   send_email_updates: boolean | null;
   player_names: string[];
+}
+
+interface GroupSessionSyncRow {
+  id: number;
+  session_date: string | Date;
+  start_arizona_local: string;
+  end_arizona_local: string;
+  title: string;
+  description: string | null;
+  location: string | null;
+  price: string | number | null;
+  curriculum: string | null;
+  max_players: number;
+  player_count: number;
+  prospect_count: number;
 }
 
 interface GoogleSessionEventMapping {
@@ -127,12 +145,16 @@ function getGoogleCalendarConfig(): GoogleCalendarConfig | null {
     listIds[1] ||
     privateCalendarId ||
     fallbackSingleId;
+  const groupCalendarId =
+    (process.env.GOOGLE_GROUP_CALENDAR_ID || '').trim() || DEFAULT_GROUP_CALENDAR_ID;
 
   if (!privateCalendarId) {
     return null;
   }
 
-  const managedCalendarIds = [...new Set([privateCalendarId, packageCalendarId].filter(Boolean))];
+  const managedCalendarIds = [
+    ...new Set([privateCalendarId, packageCalendarId, groupCalendarId].filter(Boolean)),
+  ];
 
   const oauthClientId = (process.env.GOOGLE_OAUTH_CLIENT_ID || '').trim();
   const oauthClientSecret = (process.env.GOOGLE_OAUTH_CLIENT_SECRET || '').trim();
@@ -168,6 +190,7 @@ function getGoogleCalendarConfig(): GoogleCalendarConfig | null {
   return {
     privateCalendarId,
     packageCalendarId,
+    groupCalendarId,
     managedCalendarIds,
     auth,
   };
@@ -317,6 +340,23 @@ async function ensureGoogleEventsTable(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_crm_first_session_google_events_first_session_id
       ON crm_first_session_google_events(first_session_id)
     `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS crm_group_session_google_events (
+        id BIGSERIAL PRIMARY KEY,
+        group_session_id BIGINT NOT NULL REFERENCES group_sessions(id) ON DELETE CASCADE,
+        calendar_id TEXT NOT NULL,
+        google_event_id TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(group_session_id, calendar_id)
+      )
+    `);
+
+    await query(`
+      CREATE INDEX IF NOT EXISTS idx_crm_group_session_google_events_group_session_id
+      ON crm_group_session_google_events(group_session_id)
+    `);
   })().catch((error) => {
     ensureTablePromise = null;
     throw error;
@@ -330,8 +370,8 @@ async function getSessionForSync(sessionId: string | number): Promise<SessionSyn
     `SELECT
        s.id,
        s.session_date,
-       to_char(((s.session_date AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS start_arizona_local,
-       to_char((((COALESCE(s.session_end_date, s.session_date + interval '60 minutes')) AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS end_arizona_local,
+       to_char((s.session_date AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS start_arizona_local,
+       to_char((COALESCE(s.session_end_date, s.session_date + interval '60 minutes') AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS end_arizona_local,
        s.title,
        s.location,
        s.notes,
@@ -366,8 +406,8 @@ async function getFirstSessionForSync(
     `SELECT
        fs.id,
        fs.session_date,
-       to_char(((fs.session_date AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS start_arizona_local,
-       to_char((((COALESCE(fs.session_end_date, fs.session_date + interval '60 minutes')) AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS end_arizona_local,
+       to_char((fs.session_date AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS start_arizona_local,
+       to_char((COALESCE(fs.session_end_date, fs.session_date + interval '60 minutes') AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS end_arizona_local,
        fs.title,
        fs.location,
        fs.notes,
@@ -393,6 +433,34 @@ async function getFirstSessionForSync(
   row.player_names = Array.isArray(row.player_names) ? row.player_names.filter(Boolean) : [];
   row.guest_emails = Array.isArray(row.guest_emails) ? row.guest_emails : [];
   return row;
+}
+
+async function getGroupSessionForSync(
+  groupSessionId: string | number
+): Promise<GroupSessionSyncRow | null> {
+  const result = await query(
+    `SELECT
+       gs.id,
+       gs.session_date,
+       to_char((gs.session_date AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD"T"HH24:MI:SS') AS start_arizona_local,
+       to_char((COALESCE(gs.session_date_end, gs.session_date + interval '60 minutes') AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD"T"HH24:MI:SS') AS end_arizona_local,
+       gs.title,
+       gs.description,
+       gs.location,
+       gs.price,
+       gs.curriculum,
+       gs.max_players,
+       COUNT(ps.id) FILTER (WHERE ps.has_paid = true)::int AS player_count,
+       COUNT(ps.id) FILTER (WHERE COALESCE(ps.has_paid, false) = false)::int AS prospect_count
+     FROM group_sessions gs
+     LEFT JOIN player_signups ps ON ps.group_session_id = gs.id
+     WHERE gs.id = $1
+     GROUP BY gs.id`,
+    [groupSessionId]
+  );
+
+  if (result.rows.length === 0) return null;
+  return result.rows[0] as GroupSessionSyncRow;
 }
 
 function shouldDeleteCalendarEvents(session: SessionSyncRow): boolean {
@@ -487,6 +555,44 @@ function buildFirstSessionGoogleEventPayload(firstSession: FirstSessionSyncRow):
       timeZone: ARIZONA_TIMEZONE,
     },
     attendees: attendeeEmails.length > 0 ? attendeeEmails.map((email) => ({ email })) : undefined,
+  };
+}
+
+function buildGroupSessionGoogleEventPayload(groupSession: GroupSessionSyncRow): Record<string, unknown> {
+  if (!groupSession.start_arizona_local || !groupSession.end_arizona_local) {
+    throw new Error(`Missing Arizona-local datetime fields for group session ${groupSession.id}`);
+  }
+
+  const details: string[] = [
+    'Type: Group Session',
+    `Group Session ID: ${groupSession.id}`,
+    `Max Players: ${groupSession.max_players}`,
+    `Paid Signups: ${Number(groupSession.player_count ?? 0)}`,
+    `Prospects: ${Number(groupSession.prospect_count ?? 0)}`,
+  ];
+
+  if (groupSession.curriculum && groupSession.curriculum.trim()) {
+    details.push(`Curriculum: ${groupSession.curriculum.trim()}`);
+  }
+  if (groupSession.price != null && String(groupSession.price).trim() !== '') {
+    details.push(`Price: $${Number(groupSession.price).toFixed(2)}`);
+  }
+  if (groupSession.description && groupSession.description.trim()) {
+    details.push(`Description: ${groupSession.description.trim()}`);
+  }
+
+  return {
+    summary: groupSession.title.trim(),
+    description: details.join('\n'),
+    location: groupSession.location || undefined,
+    start: {
+      dateTime: groupSession.start_arizona_local,
+      timeZone: ARIZONA_TIMEZONE,
+    },
+    end: {
+      dateTime: groupSession.end_arizona_local,
+      timeZone: ARIZONA_TIMEZONE,
+    },
   };
 }
 
@@ -669,6 +775,35 @@ async function getFirstSessionMapping(
   return result.rows[0] as GoogleSessionEventMapping;
 }
 
+async function getGroupSessionMappings(
+  groupSessionId: string | number
+): Promise<GoogleSessionEventMapping[]> {
+  const result = await query(
+    `SELECT calendar_id, google_event_id
+     FROM crm_group_session_google_events
+     WHERE group_session_id = $1`,
+    [groupSessionId]
+  );
+
+  return result.rows as GoogleSessionEventMapping[];
+}
+
+async function getGroupSessionMapping(
+  groupSessionId: string | number,
+  calendarId: string
+): Promise<GoogleSessionEventMapping | null> {
+  const result = await query(
+    `SELECT calendar_id, google_event_id
+     FROM crm_group_session_google_events
+     WHERE group_session_id = $1 AND calendar_id = $2
+     LIMIT 1`,
+    [groupSessionId, calendarId]
+  );
+
+  if (result.rows.length === 0) return null;
+  return result.rows[0] as GoogleSessionEventMapping;
+}
+
 async function upsertMapping(
   sessionId: string | number,
   calendarId: string,
@@ -694,6 +829,20 @@ async function upsertFirstSessionMapping(
      ON CONFLICT (first_session_id, calendar_id)
      DO UPDATE SET google_event_id = EXCLUDED.google_event_id, updated_at = CURRENT_TIMESTAMP`,
     [firstSessionId, calendarId, googleEventId]
+  );
+}
+
+async function upsertGroupSessionMapping(
+  groupSessionId: string | number,
+  calendarId: string,
+  googleEventId: string
+): Promise<void> {
+  await query(
+    `INSERT INTO crm_group_session_google_events (group_session_id, calendar_id, google_event_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (group_session_id, calendar_id)
+     DO UPDATE SET google_event_id = EXCLUDED.google_event_id, updated_at = CURRENT_TIMESTAMP`,
+    [groupSessionId, calendarId, googleEventId]
   );
 }
 
@@ -731,6 +880,26 @@ async function deleteFirstSessionMapping(
     `DELETE FROM crm_first_session_google_events
      WHERE first_session_id = $1`,
     [firstSessionId]
+  );
+}
+
+async function deleteGroupSessionMapping(
+  groupSessionId: string | number,
+  calendarId?: string
+): Promise<void> {
+  if (calendarId) {
+    await query(
+      `DELETE FROM crm_group_session_google_events
+       WHERE group_session_id = $1 AND calendar_id = $2`,
+      [groupSessionId, calendarId]
+    );
+    return;
+  }
+
+  await query(
+    `DELETE FROM crm_group_session_google_events
+     WHERE group_session_id = $1`,
+    [groupSessionId]
   );
 }
 
@@ -916,6 +1085,31 @@ async function syncFirstSessionEventOnCalendar(
   }
 }
 
+async function syncGroupSessionEventOnCalendar(
+  groupSession: GroupSessionSyncRow,
+  config: GoogleCalendarConfig,
+  calendarId: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const mapping = await getGroupSessionMapping(groupSession.id, calendarId);
+
+  if (!mapping) {
+    const googleEventId = await createEvent(config, calendarId, payload, 'none');
+    await upsertGroupSessionMapping(groupSession.id, calendarId, googleEventId);
+    return;
+  }
+
+  try {
+    await updateEvent(config, calendarId, mapping.google_event_id, payload, 'none');
+    await upsertGroupSessionMapping(groupSession.id, calendarId, mapping.google_event_id);
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+
+    const googleEventId = await createEvent(config, calendarId, payload, 'none');
+    await upsertGroupSessionMapping(groupSession.id, calendarId, googleEventId);
+  }
+}
+
 async function removeMappingsFromOtherCalendars(
   sessionId: string | number,
   keepCalendarId: string,
@@ -955,6 +1149,26 @@ async function removeFirstSessionMappingsFromOtherCalendars(
     }
 
     await deleteFirstSessionMapping(firstSessionId, mapping.calendar_id);
+  }
+}
+
+async function removeGroupSessionMappingsFromOtherCalendars(
+  groupSessionId: string | number,
+  keepCalendarId: string,
+  config: GoogleCalendarConfig
+): Promise<void> {
+  const mappings = await getGroupSessionMappings(groupSessionId);
+
+  for (const mapping of mappings) {
+    if (mapping.calendar_id === keepCalendarId) continue;
+
+    try {
+      await deleteEvent(config, mapping.calendar_id, mapping.google_event_id, 'none');
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+
+    await deleteGroupSessionMapping(groupSessionId, mapping.calendar_id);
   }
 }
 
@@ -1137,6 +1351,80 @@ export async function removeFirstSessionFromGoogleCalendarsSafe(
   } catch (error) {
     console.error(`Google Calendar first-session removal failed (${context})`, {
       firstSessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function syncGroupSessionToGoogleCalendars(
+  groupSessionId: string | number
+): Promise<void> {
+  const config = getGoogleCalendarConfig();
+  if (!config) {
+    logMissingConfigOnce();
+    return;
+  }
+
+  await ensureGoogleEventsTable();
+
+  const groupSession = await getGroupSessionForSync(groupSessionId);
+  if (!groupSession) return;
+
+  const targetCalendarId = config.groupCalendarId;
+  const payload = buildGroupSessionGoogleEventPayload(groupSession);
+
+  await syncGroupSessionEventOnCalendar(groupSession, config, targetCalendarId, payload);
+  await removeGroupSessionMappingsFromOtherCalendars(groupSession.id, targetCalendarId, config);
+}
+
+export async function removeGroupSessionFromGoogleCalendars(
+  groupSessionId: string | number
+): Promise<void> {
+  await ensureGoogleEventsTable();
+
+  const mappings = await getGroupSessionMappings(groupSessionId);
+  if (mappings.length === 0) return;
+
+  const config = getGoogleCalendarConfig();
+  if (!config) {
+    logMissingConfigOnce();
+    return;
+  }
+
+  for (const mapping of mappings) {
+    try {
+      await deleteEvent(config, mapping.calendar_id, mapping.google_event_id, 'none');
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+
+    await deleteGroupSessionMapping(groupSessionId, mapping.calendar_id);
+  }
+}
+
+export async function syncGroupSessionToGoogleCalendarsSafe(
+  groupSessionId: string | number,
+  context: string
+): Promise<void> {
+  try {
+    await syncGroupSessionToGoogleCalendars(groupSessionId);
+  } catch (error) {
+    console.error(`Google Calendar group-session sync failed (${context})`, {
+      groupSessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+export async function removeGroupSessionFromGoogleCalendarsSafe(
+  groupSessionId: string | number,
+  context: string
+): Promise<void> {
+  try {
+    await removeGroupSessionFromGoogleCalendars(groupSessionId);
+  } catch (error) {
+    console.error(`Google Calendar group-session removal failed (${context})`, {
+      groupSessionId,
       error: error instanceof Error ? error.message : String(error),
     });
   }

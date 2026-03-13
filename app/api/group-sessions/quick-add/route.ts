@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getClient } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
+import { syncGroupSessionToGoogleCalendarsSafe } from '@/lib/google-calendar';
 import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
 
 export const dynamic = 'force-dynamic';
@@ -177,6 +178,10 @@ export async function POST(request: NextRequest) {
     }
 
     await client.query('COMMIT');
+
+    for (const session of created) {
+      await syncGroupSessionToGoogleCalendarsSafe(session.id, 'group session quick add');
+    }
 
     return jsonResponse({
       created_count: created.length,
