@@ -374,8 +374,8 @@ async function getSessionForSync(sessionId: string | number): Promise<SessionSyn
     `SELECT
        s.id,
        s.session_date,
-       to_char((s.session_date AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS start_arizona_local,
-       to_char((COALESCE(s.session_end_date, s.session_date + interval '60 minutes') AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS end_arizona_local,
+       to_char((((s.session_date AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS start_arizona_local,
+       to_char((((COALESCE(s.session_end_date, s.session_date + interval '60 minutes') AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS end_arizona_local,
        s.title,
        s.location,
        s.notes,
@@ -410,8 +410,8 @@ async function getFirstSessionForSync(
     `SELECT
        fs.id,
        fs.session_date,
-       to_char((fs.session_date AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS start_arizona_local,
-       to_char((COALESCE(fs.session_end_date, fs.session_date + interval '60 minutes') AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS end_arizona_local,
+       to_char((((fs.session_date AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS start_arizona_local,
+       to_char((((COALESCE(fs.session_end_date, fs.session_date + interval '60 minutes') AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')), 'YYYY-MM-DD\"T\"HH24:MI:SS') AS end_arizona_local,
        fs.title,
        fs.location,
        fs.notes,
@@ -446,8 +446,8 @@ async function getGroupSessionForSync(
     `SELECT
        gs.id,
        gs.session_date,
-       to_char((gs.session_date AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD"T"HH24:MI:SS') AS start_arizona_local,
-       to_char((COALESCE(gs.session_date_end, gs.session_date + interval '60 minutes') AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD"T"HH24:MI:SS') AS end_arizona_local,
+       to_char((((gs.session_date AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')), 'YYYY-MM-DD"T"HH24:MI:SS') AS start_arizona_local,
+       to_char((((COALESCE(gs.session_date_end, gs.session_date + interval '60 minutes') AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')), 'YYYY-MM-DD"T"HH24:MI:SS') AS end_arizona_local,
        gs.title,
        gs.description,
        gs.location,
