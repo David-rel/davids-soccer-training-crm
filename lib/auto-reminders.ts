@@ -34,6 +34,21 @@ export const SESSION_REMINDER_TYPE_LABELS: Record<string, string> = {
   parent_session_plus_120m: "180 minutes after end (parent)",
 };
 
+const LEGACY_SESSION_START_TEMPLATE = [
+  "Session time for {{player_name}}.",
+  "Profile: {{profile_url}}",
+  "Session Plan: {{session_plan_url}}",
+  "{{first_session_note}}",
+].join("\n");
+
+const LEGACY_PARENT_SESSION_PLUS_120M_TEMPLATE = [
+  "Thank you for training with David today, {{parent_name}}.",
+  "Today's feedback: {{notes_summary}}",
+  "Profile: {{profile_url}}",
+  "Feedback: {{feedback_url}}",
+  "Tests: {{tests_url}}",
+].join("\n");
+
 export const SESSION_REMINDER_DEFAULT_TEMPLATES: Record<string, string> = {
   session_48h:
     "48-hour reminder for {{player_name}}: session at {{session_time}}.",
@@ -41,23 +56,19 @@ export const SESSION_REMINDER_DEFAULT_TEMPLATES: Record<string, string> = {
     "24-hour reminder for {{player_name}}: session at {{session_time}}.",
   session_6h:
     "6-hour reminder for {{player_name}}: session at {{session_time}}.",
-  session_start: [
-    "Session time for {{player_name}}.",
-    "Profile: {{profile_url}}",
-    "Session Plan: {{session_plan_url}}",
-    "{{first_session_note}}",
-  ].join("\n"),
+  session_start:
+    "Session time reminder for {{player_name}}: session starts now at {{session_time}}.",
   coach_session_start:
     "Coach reminder: {{player_name}} with {{parent_name}} starts now ({{session_time}}). Get photos, videos, and sports drink ready.",
   coach_session_plus_60m:
     "60-minute follow-up: if not already done, get a photo with {{player_name}}. {{review_prompt}}",
-  parent_session_plus_120m: [
-    "Thank you for training with David today, {{parent_name}}.",
-    "Today's feedback: {{notes_summary}}",
-    "Profile: {{profile_url}}",
-    "Feedback: {{feedback_url}}",
-    "Tests: {{tests_url}}",
-  ].join("\n"),
+  parent_session_plus_120m:
+    "Thank you for training with David today, {{parent_name}}. When you're ready, reach out to schedule your next sessions.",
+};
+
+const LEGACY_DEFAULT_TEMPLATES: Record<string, string> = {
+  session_start: LEGACY_SESSION_START_TEMPLATE,
+  parent_session_plus_120m: LEGACY_PARENT_SESSION_PLUS_120M_TEMPLATE,
 };
 
 function uniqueSorted(values: string[]): string[] {
@@ -160,6 +171,22 @@ export async function ensureAutoRemindersSchema() {
       const defaultTemplate =
         SESSION_REMINDER_DEFAULT_TEMPLATES[reminderType] ??
         `${reminderType} reminder: {{session_time}}`;
+      const legacyTemplate = LEGACY_DEFAULT_TEMPLATES[reminderType];
+
+      if (legacyTemplate) {
+        await query(
+          `
+            INSERT INTO crm_reminder_defaults (reminder_type, message_template)
+            VALUES ($1, $2)
+            ON CONFLICT (reminder_type) DO UPDATE
+            SET message_template = EXCLUDED.message_template,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE crm_reminder_defaults.message_template = $3
+          `,
+          [reminderType, defaultTemplate, legacyTemplate]
+        );
+        continue;
+      }
 
       await query(
         `

@@ -82,7 +82,7 @@ function toLocalInputValue(value: string): string {
 }
 
 const PLACEHOLDER_HELP =
-  'Locked placeholders (must stay exact): {{player_name}}, {{parent_name}}, {{session_time}}, {{profile_url}}, {{session_plan_url}}, {{feedback_url}}, {{tests_url}}, {{notes_summary}}, {{first_session_note}}, {{review_prompt}}, {{coach_phone}}';
+  'Locked placeholders vary by reminder type and must stay exact. Parent reminders use {{player_name}}, {{parent_name}}, and {{session_time}} where shown.';
 
 export default function AutoRemindersPage() {
   const [tab, setTab] = useState(0);

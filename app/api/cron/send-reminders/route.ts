@@ -19,7 +19,7 @@ export const preferredRegion = "iad1";
 
 const MESSAGE_PREFIX = "Davids Soccer Training. DO NOT REPLY";
 const MESSAGE_SUFFIX =
-  "For any questions reach out to Coach David: 7206122979";
+  "For any questions, reach out to Coach David at 720 612 2979.";
 
 interface DueReminderRow {
   id: number;
@@ -178,6 +178,34 @@ function wrapMessageLines(lines: string[]): string {
 
 function wrapCoachMessage(coreMessage: string): string {
   return compactWhitespace(coreMessage);
+}
+
+function stripSmsLinks(body: string): string {
+  const urlPattern =
+    /(?:https?:\/\/|www\.)\S+|\b[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+(?:\/\S*)?/gi;
+
+  return body
+    .split("\n")
+    .map((line) => {
+      urlPattern.lastIndex = 0;
+      const hadUrl = urlPattern.test(line);
+
+      if (
+        hadUrl &&
+        /^(Profile|Session Plan|Session|Feedback|Tests)\s*:/i.test(line.trim())
+      ) {
+        return "";
+      }
+
+      return line
+        .replace(urlPattern, "")
+        .replace(/\s+([.,!?])/g, "$1")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
 }
 
 function toPlayerLabel(playerNames: string[] | null): string {
@@ -539,10 +567,10 @@ async function buildMessage(
     const notes = await getSameDayNotes(row.parent_id, sessionDate);
     const notesSummary = notes.length
       ? clip(notes.join(" | "), 220)
-      : "Today's feedback and test updates from this session are being posted to the profile.";
+      : "Coach David will follow up with any notes from today's session.";
     const firstSessionNote =
       row.total_sessions_through_current === 1
-        ? "Since this is your first session, ask Coach David for your username and password to access the profile."
+        ? "Since this is your first session, reach out to Coach David with any questions."
         : "";
     const reviewPrompt =
       row.total_sessions_through_current === 3
@@ -601,35 +629,11 @@ async function buildMessage(
       const parentPhone = normalizeUsPhoneNumber(row.parent_phone);
       if (!parentPhone) return null;
 
-      const appContext = await fetchAppReminderContext(row.primary_crm_player_id);
-      const basePlayerUrl = appContext
-        ? `https://app.davidssoccertraining.com/player/${encodeURIComponent(appContext.appPlayerId)}`
-        : profileUrl;
-      const sessionPlanUrl = appContext
-        ? appContext.latestSessionId
-          ? `${basePlayerUrl}#tab=sessions&sessionId=${encodeURIComponent(appContext.latestSessionId)}`
-          : `${basePlayerUrl}#tab=sessions`
-        : profileUrl;
-
-      const lines = [
-        `Session time for ${playerLabel}.`,
-        basePlayerUrl
-          ? `Profile: ${basePlayerUrl}. Make sure to update profile picture, date of birth, primary/secondary position, and any other info.`
-          : "Profile: Ask Coach David for your player profile link. Make sure to update profile picture, date of birth, primary/secondary position, and any other info.",
-        sessionPlanUrl
-          ? `Session Plan: ${sessionPlanUrl}. Check it out to see what's happening.`
-          : "Session Plan: Check your player profile to see what's happening.",
-      ];
-
-      if (row.total_sessions_through_current === 1) {
-        lines.push(
-          "Since this is your first session, ask Coach David for your username and password to access the profile."
-        );
-      }
-
       return {
         to: parentPhone,
-        body: wrapMessageLines(lines),
+        body: wrapMessage(
+          `Session time reminder for ${playerLabel}: session starts now at ${sessionTimeText}.`
+        ),
       };
     }
     case "coach_session_start": {
@@ -657,44 +661,10 @@ async function buildMessage(
       const parentPhone = normalizeUsPhoneNumber(row.parent_phone);
       if (!parentPhone) return null;
 
-      const notes = await getSameDayNotes(row.parent_id, sessionDate);
-      const notesText = notes.length
-        ? `Today's feedback: ${clip(notes.join(" | "), 220)}.`
-        : "Today's feedback and test updates from this session are being posted to the profile.";
-
-      const links: string[] = [];
-      const appContext = await fetchAppReminderContext(row.primary_crm_player_id);
-
-      if (appContext) {
-        const basePlayerUrl = `https://app.davidssoccertraining.com/player/${encodeURIComponent(
-          appContext.appPlayerId
-        )}`;
-        const sessionsUrl = appContext.latestSessionId
-          ? `${basePlayerUrl}#tab=sessions&sessionId=${encodeURIComponent(appContext.latestSessionId)}`
-          : `${basePlayerUrl}#tab=sessions`;
-        const testsTabUrl = `${basePlayerUrl}#tests`;
-        const feedbackTabUrl = appContext.latestFeedbackId
-          ? `${basePlayerUrl}#feedback:${encodeURIComponent(appContext.latestFeedbackId)}`
-          : `${basePlayerUrl}#feedback`;
-
-        links.push(`Profile: ${basePlayerUrl}`);
-        links.push(`Session: ${sessionsUrl}`);
-        links.push(`Tests: ${testsTabUrl}`);
-        links.push(`Feedback: ${feedbackTabUrl}`);
-      } else {
-        if (feedbackUrl) links.push(`Feedback: ${feedbackUrl}`);
-        if (testsUrl) links.push(`Tests: ${testsUrl}`);
-        if (!feedbackUrl && !testsUrl && profileUrl) {
-          links.push(`Profile: ${profileUrl}`);
-        }
-      }
-
-      const linksText = links.length ? ` ${links.join(" ")}` : "";
-
       return {
         to: parentPhone,
         body: wrapMessage(
-          `Thank you for training with David today, ${parentDisplay}. ${notesText}${linksText}`
+          `Thank you for training with David today, ${parentDisplay}. When you're ready, reach out to schedule your next sessions.`
         ),
       };
     }
@@ -828,7 +798,7 @@ async function processDueCustomMessages(
     }
 
     const destination = options.overrideTo || parentPhone;
-    const body = wrapMessage(rendered);
+    const body = stripSmsLinks(wrapMessage(rendered));
 
     if (options.dryRun) {
       stats.previewed += 1;
@@ -1027,7 +997,10 @@ async function processDueReminders(
     }
 
     try {
-      const smsResult = await sendSmsViaTwilio(destination, prepared.body);
+      const smsResult = await sendSmsViaTwilio(
+        destination,
+        stripSmsLinks(prepared.body)
+      );
 
       if (smsResult.ok) {
         const noteParts = [`sms-sent:${smsResult.sid || "ok"}:${smsResult.status || "queued"}`];
