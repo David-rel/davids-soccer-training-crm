@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Soccer Training CRM",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000
+    },
+    {
+      "name": "Coerver Colorado",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /Users/davidfales/Coerver-Colorado && npm run dev"],
+      "port": 3000
+    }
+  ]
+}

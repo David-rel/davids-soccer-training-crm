@@ -19,15 +19,25 @@ import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 import InputLabel from '@mui/material/InputLabel';
 import FormControl from '@mui/material/FormControl';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemButton from '@mui/material/ListItemButton';
+import ListItemText from '@mui/material/ListItemText';
 import SendIcon from '@mui/icons-material/Send';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import EditIcon from '@mui/icons-material/Edit';
 import EmailIcon from '@mui/icons-material/Email';
+import BookmarkIcon from '@mui/icons-material/Bookmark';
+import BookmarkAddIcon from '@mui/icons-material/BookmarkAdd';
 
 interface EmailContact {
   email: string;
   name: string;
-  source: 'crm' | 'app' | 'signup';
+  source: 'crm' | 'app' | 'signup' | 'list';
   is_dead: boolean;
 }
 
@@ -38,15 +48,29 @@ interface SendResult {
   failed: { email: string; error: string }[];
 }
 
+interface EmailList {
+  id: number;
+  name: string;
+  member_count: number;
+}
+
+interface EmailListDetail {
+  id: number;
+  name: string;
+  members: { id: number; email: string; name: string }[];
+}
+
 const SOURCE_LABEL: Record<string, string> = {
   crm: 'CRM',
   app: 'App',
   signup: 'Signup',
+  list: 'List',
 };
-const SOURCE_COLOR: Record<string, 'primary' | 'secondary' | 'success' | 'default'> = {
+const SOURCE_COLOR: Record<string, 'primary' | 'secondary' | 'success' | 'warning' | 'default'> = {
   crm: 'primary',
   app: 'secondary',
   signup: 'success',
+  list: 'warning',
 };
 
 const DEFAULT_HTML = `<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -59,7 +83,7 @@ export default function EmailBlastPage() {
   const [contacts, setContacts] = useState<EmailContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'crm' | 'app' | 'signup'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'crm' | 'app' | 'signup' | 'list'>('all');
   const [selectedEmails, setSelectedEmails] = useState<Set<string>>(new Set());
   const [subject, setSubject] = useState('');
   const [html, setHtml] = useState(DEFAULT_HTML);
@@ -69,6 +93,17 @@ export default function EmailBlastPage() {
   const [error, setError] = useState<string | null>(null);
   const [showDeadContacts, setShowDeadContacts] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // Load list dialog
+  const [loadListOpen, setLoadListOpen] = useState(false);
+  const [availableLists, setAvailableLists] = useState<EmailList[]>([]);
+  const [loadingLists, setLoadingLists] = useState(false);
+
+  // Save as list dialog
+  const [saveListOpen, setSaveListOpen] = useState(false);
+  const [saveListName, setSaveListName] = useState('');
+  const [savingList, setSavingList] = useState(false);
+  const [saveListSuccess, setSaveListSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/email-blast', { cache: 'no-store' })
@@ -90,7 +125,7 @@ export default function EmailBlastPage() {
   }, [mode, html]);
 
   const sourceCounts = useMemo(() => {
-    const counts: Record<string, number> = { crm: 0, app: 0, signup: 0 };
+    const counts: Record<string, number> = { crm: 0, app: 0, signup: 0, list: 0 };
     contacts.forEach((c) => { counts[c.source] = (counts[c.source] ?? 0) + 1; });
     return counts;
   }, [contacts]);
@@ -167,9 +202,83 @@ export default function EmailBlastPage() {
     }
   };
 
+  const openLoadList = async () => {
+    setLoadListOpen(true);
+    setLoadingLists(true);
+    try {
+      const res = await fetch('/api/email-lists', { cache: 'no-store' });
+      const data: EmailList[] = await res.json();
+      setAvailableLists(data);
+    } catch {
+      setError('Failed to load email lists');
+      setLoadListOpen(false);
+    } finally {
+      setLoadingLists(false);
+    }
+  };
+
+  const handleLoadList = async (listId: number) => {
+    setLoadListOpen(false);
+    try {
+      const res = await fetch(`/api/email-lists/${listId}`, { cache: 'no-store' });
+      const data: EmailListDetail = await res.json();
+
+      // Merge list members into contacts (add any that aren't already there)
+      setContacts((prev) => {
+        const existingEmails = new Set(prev.map((c) => c.email.toLowerCase()));
+        const newContacts: EmailContact[] = data.members
+          .filter((m) => !existingEmails.has(m.email.toLowerCase()))
+          .map((m) => ({
+            email: m.email,
+            name: m.name || m.email,
+            source: 'list' as const,
+            is_dead: false,
+          }));
+        return [...prev, ...newContacts];
+      });
+
+      // Select all list members
+      setSelectedEmails((prev) => {
+        const next = new Set(prev);
+        data.members.forEach((m) => next.add(m.email.toLowerCase()));
+        return next;
+      });
+    } catch {
+      setError('Failed to load list');
+    }
+  };
+
+  const handleSaveList = async () => {
+    if (!saveListName.trim()) return;
+    setSavingList(true);
+    try {
+      const selectedContacts = contacts.filter((c) => selectedEmails.has(c.email));
+      const members = selectedContacts.map((c) => ({ email: c.email, name: c.name }));
+
+      const res = await fetch('/api/email-lists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: saveListName.trim(), members }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Failed to save list');
+      } else {
+        setSaveListSuccess(`Saved "${data.name}" with ${data.member_count} email${data.member_count !== 1 ? 's' : ''}`);
+        setSaveListOpen(false);
+        setSaveListName('');
+      }
+    } catch {
+      setError('Failed to save list');
+    } finally {
+      setSavingList(false);
+    }
+  };
+
   if (loading) return <Typography>Loading contacts...</Typography>;
 
   const selectedContactList = contacts.filter((c) => selectedEmails.has(c.email));
+  const hasListContacts = sourceCounts.list > 0;
 
   return (
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '360px 1fr' }, gap: 3, alignItems: 'start' }}>
@@ -180,9 +289,19 @@ export default function EmailBlastPage() {
             <Typography variant="h6" sx={{ fontWeight: 700 }}>
               Contacts
             </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {contacts.length} total
-            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Typography variant="caption" color="text.secondary">
+                {contacts.length} total
+              </Typography>
+              <Button
+                size="small"
+                startIcon={<BookmarkIcon fontSize="small" />}
+                onClick={openLoadList}
+                sx={{ ml: 0.5, fontSize: 12 }}
+              >
+                Load List
+              </Button>
+            </Box>
           </Box>
 
           {/* Source filter */}
@@ -197,6 +316,9 @@ export default function EmailBlastPage() {
               <MenuItem value="crm">CRM Contacts ({sourceCounts.crm})</MenuItem>
               <MenuItem value="app">App Parents ({sourceCounts.app})</MenuItem>
               <MenuItem value="signup">Group Signups ({sourceCounts.signup})</MenuItem>
+              {hasListContacts && (
+                <MenuItem value="list">From Lists ({sourceCounts.list})</MenuItem>
+              )}
             </Select>
           </FormControl>
 
@@ -284,7 +406,7 @@ export default function EmailBlastPage() {
 
           <Divider sx={{ mt: 1, mb: 1.5 }} />
 
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
             <EmailIcon fontSize="small" color="primary" />
             <Typography variant="body2">
               <strong>{selectedEmails.size}</strong> selected
@@ -298,6 +420,16 @@ export default function EmailBlastPage() {
                 </Button>
               )}
             </Typography>
+            {selectedEmails.size > 0 && (
+              <Button
+                size="small"
+                startIcon={<BookmarkAddIcon fontSize="small" />}
+                onClick={() => setSaveListOpen(true)}
+                sx={{ ml: 'auto', fontSize: 12 }}
+              >
+                Save as List
+              </Button>
+            )}
           </Box>
         </CardContent>
       </Card>
@@ -306,6 +438,10 @@ export default function EmailBlastPage() {
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         {error && (
           <Alert severity="error" onClose={() => setError(null)}>{error}</Alert>
+        )}
+
+        {saveListSuccess && (
+          <Alert severity="success" onClose={() => setSaveListSuccess(null)}>{saveListSuccess}</Alert>
         )}
 
         {result && (
@@ -410,6 +546,71 @@ export default function EmailBlastPage() {
           </CardContent>
         </Card>
       </Box>
+
+      {/* Load List dialog */}
+      <Dialog open={loadListOpen} onClose={() => setLoadListOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>Load Email List</DialogTitle>
+        <DialogContent sx={{ p: 0 }}>
+          {loadingLists ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : availableLists.length === 0 ? (
+            <Typography color="text.secondary" sx={{ px: 3, py: 3 }}>
+              No saved email lists. Go to Email Lists to create one.
+            </Typography>
+          ) : (
+            <List disablePadding>
+              {availableLists.map((list, i) => (
+                <Box key={list.id}>
+                  {i > 0 && <Divider />}
+                  <ListItem disablePadding>
+                    <ListItemButton onClick={() => handleLoadList(list.id)}>
+                      <ListItemText
+                        primary={list.name}
+                        secondary={`${list.member_count} email${list.member_count !== 1 ? 's' : ''}`}
+                      />
+                    </ListItemButton>
+                  </ListItem>
+                </Box>
+              ))}
+            </List>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setLoadListOpen(false)}>Cancel</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Save as List dialog */}
+      <Dialog open={saveListOpen} onClose={() => { setSaveListOpen(false); setSaveListName(''); }} maxWidth="xs" fullWidth>
+        <DialogTitle>Save Selection as List</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Save the {selectedEmails.size} selected email{selectedEmails.size !== 1 ? 's' : ''} as a reusable list.
+          </Typography>
+          <TextField
+            autoFocus
+            label="List Name"
+            fullWidth
+            value={saveListName}
+            onChange={(e) => setSaveListName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveList(); }}
+            placeholder="e.g. Summer Camp Parents"
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setSaveListOpen(false); setSaveListName(''); }}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveList}
+            disabled={!saveListName.trim() || savingList}
+            startIcon={savingList ? <CircularProgress size={16} color="inherit" /> : <BookmarkAddIcon />}
+          >
+            Save List
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
