@@ -25,7 +25,9 @@ import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
 import ReceiptLongIcon from '@mui/icons-material/ReceiptLong';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import EmailIcon from '@mui/icons-material/Email';
+import SmsIcon from '@mui/icons-material/Sms';
 import FormatListBulletedIcon from '@mui/icons-material/FormatListBulleted';
+import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useTheme } from '@mui/material/styles';
 
@@ -41,6 +43,8 @@ const navItems = [
   { label: 'Logic', href: '/logic', icon: <PsychologyIcon /> },
   { label: 'Email Blast', href: '/email-blast', icon: <EmailIcon /> },
   { label: 'Email Lists', href: '/email-lists', icon: <FormatListBulletedIcon /> },
+  { label: 'SMS Blast', href: '/sms-blast', icon: <SmsIcon /> },
+  { label: 'Phone Lists', href: '/phone-lists', icon: <PhoneAndroidIcon /> },
   { label: 'Finance Goals', href: '/finance-goals', icon: <AccountBalanceWalletIcon /> },
   { label: 'Expenses', href: '/expenses', icon: <ReceiptLongIcon /> },
 ];
