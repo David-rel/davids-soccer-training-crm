@@ -55,6 +55,7 @@ interface SessionSyncRow {
   guest_emails: string[] | null;
   send_email_updates: boolean | null;
   parent_name: string;
+  coach_name: string | null;
   player_names: string[];
 }
 
@@ -70,6 +71,7 @@ interface FirstSessionSyncRow {
   cancelled: boolean | null;
   parent_name: string;
   parent_email: string | null;
+  coach_name: string | null;
   guest_emails: string[] | null;
   send_email_updates: boolean | null;
   player_names: string[];
@@ -385,13 +387,15 @@ async function getSessionForSync(sessionId: string | number): Promise<SessionSyn
        s.guest_emails,
        s.send_email_updates,
        p.name AS parent_name,
+       st.name AS coach_name,
        COALESCE(ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL), '{}') AS player_names
      FROM crm_sessions s
      JOIN crm_parents p ON p.id = s.parent_id
+     LEFT JOIN crm_staff st ON st.id = s.coach_id
      LEFT JOIN crm_session_players sp ON sp.session_id = s.id
      LEFT JOIN crm_players pl ON pl.id = sp.player_id
      WHERE s.id = $1
-     GROUP BY s.id, p.name`,
+     GROUP BY s.id, p.name, st.name`,
     [sessionId]
   );
 
@@ -419,15 +423,17 @@ async function getFirstSessionForSync(
        fs.cancelled,
        p.name AS parent_name,
        p.email AS parent_email,
+       st.name AS coach_name,
        fs.guest_emails,
        fs.send_email_updates,
        COALESCE(ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL), '{}') AS player_names
      FROM crm_first_sessions fs
      JOIN crm_parents p ON p.id = fs.parent_id
+     LEFT JOIN crm_staff st ON st.id = fs.coach_id
      LEFT JOIN crm_first_session_players fsp ON fsp.first_session_id = fs.id
      LEFT JOIN crm_players pl ON pl.id = fsp.player_id
      WHERE fs.id = $1
-     GROUP BY fs.id, p.name, p.email`,
+     GROUP BY fs.id, p.name, p.email, st.name`,
     [firstSessionId]
   );
 
@@ -481,6 +487,17 @@ function getTargetCalendarId(session: SessionSyncRow, config: GoogleCalendarConf
   return session.package_id ? config.packageCalendarId : config.privateCalendarId;
 }
 
+function appendCoachToSummary(summary: string, coachName: string | null | undefined): string {
+  const coach = coachName?.trim();
+  if (!coach) return summary;
+
+  const suffix = `with Coach ${coach}`;
+  // Avoid double-appending when re-syncing an event that already carries the suffix.
+  if (summary.toLowerCase().endsWith(suffix.toLowerCase())) return summary;
+
+  return `${summary} ${suffix}`;
+}
+
 function truncateGoogleField(value: string | null | undefined, maxLength: number): string | undefined {
   if (!value) return undefined;
   const normalized = value.trim();
@@ -511,9 +528,10 @@ function buildGoogleEventPayload(session: SessionSyncRow): Record<string, unknow
   }
 
   const attendeeEmails = parseGuestEmails(session.guest_emails || []).emails;
-  const rawSummary = session.title?.trim()
-    ? session.title
+  const baseSummary = session.title?.trim()
+    ? session.title.trim()
     : `${sessionType}: ${session.parent_name}`;
+  const rawSummary = appendCoachToSummary(baseSummary, session.coach_name);
   const summary =
     truncateGoogleField(rawSummary, GOOGLE_EVENT_SUMMARY_MAX) || `${sessionType}: ${session.parent_name}`;
   const description = truncateGoogleField(details.join('\n'), GOOGLE_EVENT_DESCRIPTION_MAX);
@@ -557,9 +575,10 @@ function buildFirstSessionGoogleEventPayload(firstSession: FirstSessionSyncRow):
     ...(firstSession.parent_email ? [firstSession.parent_email] : []),
   ];
   const attendeeEmails = parseGuestEmails(attendeeCandidates).emails;
-  const rawSummary = firstSession.title?.trim()
-    ? firstSession.title
+  const baseSummary = firstSession.title?.trim()
+    ? firstSession.title.trim()
     : `First Session: ${firstSession.parent_name}`;
+  const rawSummary = appendCoachToSummary(baseSummary, firstSession.coach_name);
   const summary =
     truncateGoogleField(rawSummary, GOOGLE_EVENT_SUMMARY_MAX) ||
     `First Session: ${firstSession.parent_name}`;
