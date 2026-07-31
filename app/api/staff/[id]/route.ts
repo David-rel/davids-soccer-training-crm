@@ -1,12 +1,9 @@
 import { NextRequest } from 'next/server';
 import { query, getClient } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
-import { ensureStaffTables } from '../route';
+import { ensureStaffTables, STAFF_COLUMNS, normalizePayoutRate } from '../route';
 
 export const dynamic = 'force-dynamic';
-
-const STAFF_COLUMNS =
-  'id, name, email, phone, role, preferred_location, player_ages, player_notes, description, preferred_days, preferred_times, is_owner, created_at, updated_at';
 
 const EDITABLE_FIELDS = [
   'name', 'email', 'phone', 'role', 'preferred_location',
@@ -83,6 +80,10 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     if ('is_owner' in body) {
       values.push(body.is_owner === true);
       setClauses.push(`is_owner = $${values.length}`);
+    }
+    if ('payout_rate' in body) {
+      values.push(normalizePayoutRate(body.payout_rate));
+      setClauses.push(`payout_rate = $${values.length}`);
     }
     if (setClauses.length > 0) {
       values.push(id);

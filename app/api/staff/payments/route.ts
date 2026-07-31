@@ -1,6 +1,6 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
-import { ensureStaffTables } from '@/app/api/staff/route';
+import { ensureStaffTables, DEFAULT_PAYOUT_RATE } from '@/app/api/staff/route';
 import { ensureSessionCalendarColumns } from '@/lib/session-calendar-fields';
 import { ensureFirstSessionCalendarColumns } from '@/lib/first-session-calendar-fields';
 import { parseDateAsArizona } from '@/lib/timezone';
@@ -8,7 +8,6 @@ import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
 
-const COACH_PAYOUT_RATE = 0.5;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 type SessionKind = 'first' | 'package' | 'session';
@@ -28,9 +27,16 @@ interface CoachGroup {
   coach_id: number | null;
   coach_name: string | null;
   is_owner: boolean;
+  payout_rate: number;
   sessions: WeekSession[];
   total_value: number;
   coach_payout: number;
+}
+
+// A coach's own split, defaulting to the standard rate when unset.
+function coachRate(value: unknown): number {
+  const parsed = value == null ? NaN : Number(value);
+  return Number.isFinite(parsed) ? parsed : DEFAULT_PAYOUT_RATE;
 }
 
 // Validate a YYYY-MM-DD string; defaults to null when malformed.
@@ -89,6 +95,7 @@ export async function GET(request: NextRequest) {
          COALESCE(s.coach_id, pkg.coach_id, pc.coach_id) AS coach_id,
          est.name AS coach_name,
          COALESCE(est.is_owner, false) AS coach_is_owner,
+         est.payout_rate AS coach_payout_rate,
          p.name AS parent_name,
          (s.package_id IS NOT NULL) AS is_package,
          CASE
@@ -107,7 +114,7 @@ export async function GET(request: NextRequest) {
        WHERE s.session_date >= $1 AND s.session_date < $2
          AND COALESCE(s.cancelled, false) = false
          AND COALESCE(s.status, '') <> 'cancelled'
-       GROUP BY s.id, s.coach_id, pkg.coach_id, pc.coach_id, est.name, est.is_owner, p.name, pkg.price, pkg.total_sessions
+       GROUP BY s.id, s.coach_id, pkg.coach_id, pc.coach_id, est.name, est.is_owner, est.payout_rate, p.name, pkg.price, pkg.total_sessions
        ORDER BY s.session_date`,
       [startIso, endIso]
     );
@@ -120,6 +127,7 @@ export async function GET(request: NextRequest) {
          fs.coach_id,
          st.name AS coach_name,
          COALESCE(st.is_owner, false) AS coach_is_owner,
+         st.payout_rate AS coach_payout_rate,
          p.name AS parent_name,
          fs.price AS value
        FROM crm_first_sessions fs
@@ -138,6 +146,7 @@ export async function GET(request: NextRequest) {
       coachId: number | null,
       coachName: string | null,
       isOwner: boolean,
+      payoutRate: number,
       session: WeekSession
     ) => {
       const key = coachId == null ? 'unassigned' : String(coachId);
@@ -147,6 +156,7 @@ export async function GET(request: NextRequest) {
           coach_id: coachId,
           coach_name: coachName,
           is_owner: isOwner,
+          payout_rate: payoutRate,
           sessions: [],
           total_value: 0,
           coach_payout: 0,
@@ -166,7 +176,7 @@ export async function GET(request: NextRequest) {
         else if (row.package_coach_id != null) coachSource = 'package';
         else coachSource = 'player';
       }
-      addSession(row.coach_id, row.coach_name, row.coach_is_owner === true, {
+      addSession(row.coach_id, row.coach_name, row.coach_is_owner === true, coachRate(row.coach_payout_rate), {
         id: row.id,
         kind: row.is_package ? 'package' : 'session',
         session_date: row.session_date,
@@ -179,7 +189,7 @@ export async function GET(request: NextRequest) {
 
     for (const row of firstResult.rows) {
       const value = row.value == null ? 0 : Number(row.value);
-      addSession(row.coach_id, row.coach_name, row.coach_is_owner === true, {
+      addSession(row.coach_id, row.coach_name, row.coach_is_owner === true, coachRate(row.coach_payout_rate), {
         id: row.id,
         kind: 'first',
         session_date: row.session_date,
@@ -191,15 +201,16 @@ export async function GET(request: NextRequest) {
     }
 
     // Payout rule: the owner takes no cut and keeps 100% of their own sessions;
-    // every other coach is paid 50% of their session value. "Unassigned"
-    // sessions aren't owed to anyone yet, so they carry no payout.
+    // every other coach is paid their own payout_rate share of their session
+    // value (50% unless their staff row says otherwise). "Unassigned" sessions
+    // aren't owed to anyone yet, so they carry no payout.
     const coaches = Array.from(groups.values())
       .map((group) => ({
         ...group,
         coach_payout:
           group.coach_id == null || group.is_owner
             ? 0
-            : group.total_value * COACH_PAYOUT_RATE,
+            : group.total_value * group.payout_rate,
         sessions: group.sessions.sort(
           (a, b) => new Date(a.session_date).getTime() - new Date(b.session_date).getTime()
         ),
@@ -214,13 +225,13 @@ export async function GET(request: NextRequest) {
     // What must actually be paid out to the (non-owner) coaches.
     const owedToCoaches = coaches.reduce((sum, c) => sum + c.coach_payout, 0);
     // The owner keeps everything that isn't owed to another coach: their own
-    // sessions at 100% plus the other 50% of every other coach's sessions.
+    // sessions at 100% plus the remainder of every other coach's sessions.
     const ownerTake = grandTotalValue - owedToCoaches;
 
     return jsonResponse({
       week_start: startIso,
       week_end: endIso,
-      payout_rate: COACH_PAYOUT_RATE,
+      default_payout_rate: DEFAULT_PAYOUT_RATE,
       grand_total_value: grandTotalValue,
       owed_to_coaches: owedToCoaches,
       owner_take: ownerTake,

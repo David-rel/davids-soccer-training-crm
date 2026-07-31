@@ -9,6 +9,7 @@ import Button from '@mui/material/Button';
 import IconButton from '@mui/material/IconButton';
 import TextField from '@mui/material/TextField';
 import MenuItem from '@mui/material/MenuItem';
+import InputAdornment from '@mui/material/InputAdornment';
 import Dialog from '@mui/material/Dialog';
 import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
@@ -40,6 +41,8 @@ interface Staff {
   preferred_days: string | null;
   preferred_times: string | null;
   is_owner: boolean;
+  // NUMERIC comes back from pg as a string.
+  payout_rate: number | string | null;
   players: AssignedPlayer[];
 }
 
@@ -49,14 +52,30 @@ type StaffForm = {
   name: string; email: string; phone: string; role: string;
   preferred_location: string; player_ages: string; player_notes: string;
   description: string; preferred_days: string; preferred_times: string;
-  is_owner: boolean; player_ids: number[];
+  is_owner: boolean; payout_pct: string; player_ids: number[];
 };
+
+const DEFAULT_PAYOUT_PCT = 50;
 
 const EMPTY_FORM: StaffForm = {
   name: '', email: '', phone: '', role: '', preferred_location: '',
   player_ages: '', player_notes: '', description: '', preferred_days: '',
-  preferred_times: '', is_owner: false, player_ids: [],
+  preferred_times: '', is_owner: false, payout_pct: String(DEFAULT_PAYOUT_PCT),
+  player_ids: [],
 };
+
+// Stored rate (0.4) shown as a whole-ish percent (40).
+function payoutPct(rate: number | string | null | undefined): number {
+  const parsed = rate == null ? NaN : Number(rate);
+  return Number.isFinite(parsed) ? Math.round(parsed * 1000) / 10 : DEFAULT_PAYOUT_PCT;
+}
+
+// The percent typed into the form, back to a stored rate.
+function payoutRateFromForm(pct: string): number {
+  const parsed = Number(pct.trim());
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_PAYOUT_PCT / 100;
+  return Math.min(100, parsed) / 100;
+}
 
 interface PaymentSession {
   id: number;
@@ -72,6 +91,7 @@ interface CoachPayments {
   coach_id: number | null;
   coach_name: string | null;
   is_owner: boolean;
+  payout_rate: number;
   sessions: PaymentSession[];
   total_value: number;
   coach_payout: number;
@@ -80,7 +100,7 @@ interface CoachPayments {
 interface PaymentsResponse {
   week_start: string;
   week_end: string;
-  payout_rate: number;
+  default_payout_rate: number;
   grand_total_value: number;
   owed_to_coaches: number;
   owner_take: number;
@@ -205,6 +225,7 @@ export default function StaffPage() {
       player_notes: s.player_notes ?? '', description: s.description ?? '',
       preferred_days: s.preferred_days ?? '', preferred_times: s.preferred_times ?? '',
       is_owner: s.is_owner ?? false,
+      payout_pct: String(payoutPct(s.payout_rate)),
       player_ids: s.players.map((p) => p.id),
     });
     setDialogOpen(true);
@@ -217,7 +238,8 @@ export default function StaffPage() {
       const res = await fetch(editId ? `/api/staff/${editId}` : '/api/staff', {
         method: editId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        // The API takes a fraction; the form collects a percentage.
+        body: JSON.stringify({ ...form, payout_rate: payoutRateFromForm(form.payout_pct) }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Failed to save coach'); }
@@ -274,6 +296,11 @@ export default function StaffPage() {
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>{s.name}</Typography>
                       {s.role && <Chip label={s.role} size="small" color="primary" variant="outlined" />}
+                      {s.is_owner ? (
+                        <Chip label="Owner · keeps 100%" size="small" color="primary" variant="outlined" />
+                      ) : (
+                        <Chip label={`${payoutPct(s.payout_rate)}% split`} size="small" variant="outlined" />
+                      )}
                     </Box>
                     {(s.email || s.phone) && (
                       <Typography variant="body2" color="text.secondary">
@@ -326,7 +353,7 @@ export default function StaffPage() {
         </Box>
 
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          Week of {formatWeekRange(weekStart)} · non-owner coaches earn 50% of each session&apos;s value; the owner keeps the rest
+          Week of {formatWeekRange(weekStart)} · each non-owner coach earns their own split of their sessions&apos; value (50% unless set otherwise); the owner keeps the rest
         </Typography>
 
         {paymentsLoading ? (
@@ -369,9 +396,11 @@ export default function StaffPage() {
                             · {coach.sessions.length} session{coach.sessions.length === 1 ? '' : 's'}
                           </Typography>
                         </Typography>
-                        {coach.is_owner && (
+                        {coach.is_owner ? (
                           <Chip label="Owner" size="small" color="primary" variant="outlined" sx={{ height: 20 }} />
-                        )}
+                        ) : !unassigned ? (
+                          <Chip label={`${payoutPct(coach.payout_rate)}% split`} size="small" variant="outlined" sx={{ height: 20 }} />
+                        ) : null}
                       </Box>
                       {!unassigned && (
                         <Box sx={{ textAlign: 'right' }}>
@@ -465,8 +494,20 @@ export default function StaffPage() {
             <Divider />
             <FormControlLabel
               control={<Switch checked={form.is_owner} onChange={(e) => set('is_owner', e.target.checked)} />}
-              label="Owner — keeps 100% of their sessions (no 50% payout split)"
+              label="Owner — keeps 100% of their sessions (no payout split)"
             />
+            {!form.is_owner && (
+              <TextField
+                label="Payout Split"
+                type="number"
+                value={form.payout_pct}
+                onChange={(e) => set('payout_pct', e.target.value)}
+                InputProps={{ endAdornment: <InputAdornment position="end">%</InputAdornment> }}
+                inputProps={{ min: 0, max: 100, step: 1 }}
+                sx={{ maxWidth: 200 }}
+                helperText="Share of each session's value this coach is paid."
+              />
+            )}
           </Box>
         </DialogContent>
         <DialogActions>

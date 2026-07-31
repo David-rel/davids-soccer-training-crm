@@ -39,10 +39,16 @@ export async function ensureStaffTables(): Promise<void> {
       `ALTER TABLE crm_packages ADD COLUMN IF NOT EXISTS coach_id INTEGER REFERENCES crm_staff(id) ON DELETE SET NULL`
     );
     // Owner coaches keep 100% of their sessions (no payout split); every other
-    // coach is paid 50% and the remainder is the owner's take.
+    // coach is paid their payout_rate share and the remainder is the owner's
+    // take. The rate is per-coach (0.5 = 50%) since not everyone is on the
+    // same split.
     await query(
       `ALTER TABLE crm_staff ADD COLUMN IF NOT EXISTS is_owner BOOLEAN DEFAULT false`
     );
+    await query(
+      `ALTER TABLE crm_staff ADD COLUMN IF NOT EXISTS payout_rate NUMERIC(5,4) DEFAULT 0.5`
+    );
+    await query(`UPDATE crm_staff SET payout_rate = 0.5 WHERE payout_rate IS NULL`);
   })().catch((error) => {
     ensureStaffTablesPromise = null;
     throw error;
@@ -50,8 +56,19 @@ export async function ensureStaffTables(): Promise<void> {
   await ensureStaffTablesPromise;
 }
 
-const STAFF_COLUMNS =
-  'id, name, email, phone, role, preferred_location, player_ages, player_notes, description, preferred_days, preferred_times, is_owner, created_at, updated_at';
+export const STAFF_COLUMNS =
+  'id, name, email, phone, role, preferred_location, player_ages, player_notes, description, preferred_days, preferred_times, is_owner, payout_rate, created_at, updated_at';
+
+export const DEFAULT_PAYOUT_RATE = 0.5;
+
+// Accepts a fraction (0.4) or a percentage (40); anything unusable falls back
+// to the standard split.
+export function normalizePayoutRate(value: unknown): number {
+  const parsed = typeof value === 'string' ? Number(value.trim()) : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_PAYOUT_RATE;
+  const rate = parsed > 1 ? parsed / 100 : parsed;
+  return Math.min(1, Math.round(rate * 10000) / 10000);
+}
 
 export async function GET() {
   try {
@@ -85,7 +102,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       name, email, phone, role, preferred_location, player_ages,
-      player_notes, description, preferred_days, preferred_times, is_owner, player_ids,
+      player_notes, description, preferred_days, preferred_times, is_owner, payout_rate, player_ids,
     } = body as Record<string, unknown> & { player_ids?: number[] };
 
     if (typeof name !== 'string' || !name.trim()) {
@@ -95,8 +112,8 @@ export async function POST(request: NextRequest) {
     await client.query('BEGIN');
     const inserted = await client.query(
       `INSERT INTO crm_staff
-        (name, email, phone, role, preferred_location, player_ages, player_notes, description, preferred_days, preferred_times, is_owner)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+        (name, email, phone, role, preferred_location, player_ages, player_notes, description, preferred_days, preferred_times, is_owner, payout_rate)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
        RETURNING ${STAFF_COLUMNS}`,
       [
         name.trim(),
@@ -110,6 +127,7 @@ export async function POST(request: NextRequest) {
         (preferred_days as string)?.trim() || null,
         (preferred_times as string)?.trim() || null,
         is_owner === true,
+        payout_rate == null ? DEFAULT_PAYOUT_RATE : normalizePayoutRate(payout_rate),
       ]
     );
     const staff = inserted.rows[0];
