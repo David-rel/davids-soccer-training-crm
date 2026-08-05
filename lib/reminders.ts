@@ -33,13 +33,21 @@ export const SESSION_REMINDER_INTERVALS = [
   { type: "session_6h", offsetMinutes: -6 * 60 },
   { type: "session_start", offsetMinutes: 0 },
   { type: "coach_session_start", offsetMinutes: 0 },
-  { type: "coach_session_plus_60m", offsetMinutes: 60 },
   { type: "parent_session_plus_120m", offsetMinutes: 180 },
 ] as const;
 
 export const SESSION_REMINDER_TYPES = SESSION_REMINDER_INTERVALS.map(
   (interval) => interval.type
 );
+
+/**
+ * Reminder types we no longer schedule. Rows for these may still exist from
+ * before they were retired, so the send job skips them and the nightly cleanup
+ * removes any that are still unsent.
+ */
+export const RETIRED_SESSION_REMINDER_TYPES = [
+  "coach_session_plus_60m",
+] as const;
 
 export type SessionReminderType = (typeof SESSION_REMINDER_INTERVALS)[number]["type"];
 

@@ -5,6 +5,7 @@ import {
   getSessionReminderDefaultsMap,
   ReminderDefaultRow,
 } from "@/lib/auto-reminders";
+import { RETIRED_SESSION_REMINDER_TYPES } from "@/lib/reminders";
 import { formatArizonaDateTime, getDateBoundsArizona } from "@/lib/timezone";
 import {
   getCoachPhoneNumber,
@@ -466,40 +467,6 @@ function formatReminderTime(dateValue: string | Date): string {
   return formatArizonaDateTime(date);
 }
 
-async function sendCoachDeliveryConfirmation(
-  row: DueReminderRow,
-  destination: string
-): Promise<{ ok: boolean; detail: string }> {
-  const coachPhone = getCoachPhoneNumber();
-  const dueAtArizona = formatInTimeZone(
-    normalizeUtcDate(row.due_at),
-    "America/Phoenix",
-    "yyyy-MM-dd h:mm a zzz"
-  );
-  const sentAtArizona = formatInTimeZone(
-    new Date(),
-    "America/Phoenix",
-    "yyyy-MM-dd h:mm a zzz"
-  );
-  const recipientLabel = toParentDisplayName(row);
-  const body = compactWhitespace(
-    `Auto reminder sent: ${row.reminder_type} to ${destination} (${recipientLabel}) due ${dueAtArizona}. Sent at ${sentAtArizona}.`
-  );
-
-  const notifyResult = await sendSmsViaTwilio(coachPhone, body);
-  if (!notifyResult.ok) {
-    return {
-      ok: false,
-      detail: `coach-notify-failed:${clip(notifyResult.error || "unknown", 250)}`,
-    };
-  }
-
-  return {
-    ok: true,
-    detail: `coach-notified:${notifyResult.sid || "ok"}`,
-  };
-}
-
 async function buildMessage(
   row: DueReminderRow,
   defaultsMap: Record<string, ReminderDefaultRow>
@@ -646,19 +613,6 @@ async function buildMessage(
         to: getCoachPhoneNumber(),
         body: wrapCoachMessage(
           `Coach reminder: ${playerLabel} with ${parentDisplay} starts now (${sessionTimeText}). Get photos, videos, and sports drink ready.`
-        ),
-      };
-    }
-    case "coach_session_plus_60m": {
-      const reviewPrompt =
-        row.total_sessions_through_current === 3
-          ? " This is session #3, ask for a review and capture quick feedback."
-          : "";
-
-      return {
-        to: getCoachPhoneNumber(),
-        body: wrapCoachMessage(
-          `60-minute follow-up: if not already done, get a photo with ${playerLabel}.${reviewPrompt}`
         ),
       };
     }
@@ -935,6 +889,7 @@ async function processDueReminders(
         COALESCE(array_length($7::text[], 1), 0) = 0
         OR r.reminder_type = ANY($7::text[])
       )
+      AND r.reminder_type <> ALL($8::text[])
       AND COALESCE(p.is_dead, false) = false
       AND (
         r.session_id IS NULL
@@ -960,6 +915,7 @@ async function processDueReminders(
       options.sessionId,
       options.firstSessionId,
       options.reminderTypes,
+      RETIRED_SESSION_REMINDER_TYPES as unknown as string[],
     ]
   );
 
@@ -1008,18 +964,11 @@ async function processDueReminders(
       );
 
       if (smsResult.ok) {
-        const noteParts = [`sms-sent:${smsResult.sid || "ok"}:${smsResult.status || "queued"}`];
-        try {
-          const coachNotify = await sendCoachDeliveryConfirmation(row, destination);
-          noteParts.push(coachNotify.detail);
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : "Unknown coach notify exception";
-          noteParts.push(`coach-notify-exception:${clip(message, 250)}`);
-        }
-
         if (options.markSent) {
-          await markReminderSent(row.id, noteParts.join(" | "));
+          await markReminderSent(
+            row.id,
+            `sms-sent:${smsResult.sid || "ok"}:${smsResult.status || "queued"}`
+          );
         }
         stats.sent += 1;
       } else {

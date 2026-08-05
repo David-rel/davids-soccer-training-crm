@@ -1,5 +1,8 @@
 import { query } from "@/lib/db";
-import { SESSION_REMINDER_TYPES } from "@/lib/reminders";
+import {
+  RETIRED_SESSION_REMINDER_TYPES,
+  SESSION_REMINDER_TYPES,
+} from "@/lib/reminders";
 
 export interface ReminderDefaultRow {
   reminder_type: string;
@@ -30,7 +33,6 @@ export const SESSION_REMINDER_TYPE_LABELS: Record<string, string> = {
   session_6h: "6 hours before session",
   session_start: "At session start (parent)",
   coach_session_start: "At session start (coach)",
-  coach_session_plus_60m: "60 minutes after start (coach)",
   parent_session_plus_120m: "180 minutes after end (parent)",
 };
 
@@ -63,8 +65,6 @@ export const SESSION_REMINDER_DEFAULT_TEMPLATES: Record<string, string> = {
     "Session time reminder for {{player_name}}: session starts now at {{session_time}}.",
   coach_session_start:
     "Coach reminder: {{player_name}} with {{parent_name}} starts now ({{session_time}}). Get photos, videos, and sports drink ready.",
-  coach_session_plus_60m:
-    "60-minute follow-up: if not already done, get a photo with {{player_name}}. {{review_prompt}}",
   parent_session_plus_120m:
     "Thank you for training with David today, {{parent_name}}. Feel free to reach out to schedule again. If you have a minute, please leave a review: https://g.page/r/CbrmGhQt_77aEAI/review",
 };
@@ -203,6 +203,13 @@ export async function ensureAutoRemindersSchema() {
         [reminderType, defaultTemplate]
       );
     }
+
+    // Drop templates for reminder types we no longer schedule so they can't be
+    // rendered for leftover rows or shown on the settings page.
+    await query(
+      `DELETE FROM crm_reminder_defaults WHERE reminder_type = ANY($1::text[])`,
+      [RETIRED_SESSION_REMINDER_TYPES as unknown as string[]]
+    );
   })().catch((error) => {
     schemaReadyPromise = null;
     throw error;

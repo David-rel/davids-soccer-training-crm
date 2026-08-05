@@ -3,6 +3,7 @@ import { query } from '@/lib/db';
 import {
   createSessionReminders,
   createFollowUpReminders,
+  RETIRED_SESSION_REMINDER_TYPES,
   SESSION_REMINDER_TYPES,
 } from '@/lib/reminders';
 import { nowInArizona } from '@/lib/timezone';
@@ -330,6 +331,18 @@ export async function POST(request: Request) {
       RETURNING id
     `);
     results.staleRemindersDeleted += deletedPastSessionReminders.rowCount || 0;
+
+    // Delete unsent reminders of types we no longer schedule.
+    const deletedRetiredTypeReminders = await query(
+      `
+      DELETE FROM crm_reminders r
+      WHERE r.sent = false
+        AND r.reminder_type = ANY($1::text[])
+      RETURNING id
+    `,
+      [RETIRED_SESSION_REMINDER_TYPES as unknown as string[]]
+    );
+    results.staleRemindersDeleted += deletedRetiredTypeReminders.rowCount || 0;
 
     // Delete reminders belonging to contacts marked dead.
     const deletedDeadContactReminders = await query(`
