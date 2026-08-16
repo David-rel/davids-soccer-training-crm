@@ -29,10 +29,13 @@ import VisibilityIcon from '@mui/icons-material/Visibility';
 import LinkIcon from '@mui/icons-material/Link';
 import Alert from '@mui/material/Alert';
 import MenuItem from '@mui/material/MenuItem';
+import { upload } from '@vercel/blob/client';
 
 export const dynamic = 'force-dynamic';
 
 const STARTING_EXPENSE_YEAR = 2026;
+const MAX_RECEIPT_SIZE_BYTES = 25 * 1024 * 1024; // matches the upload route
+const MULTIPART_UPLOAD_THRESHOLD_BYTES = 5 * 1024 * 1024;
 const EXPENSE_PAGE_SIZE = 25;
 const DEFAULT_BUSINESS_PERCENTAGE = 100;
 const ARIZONA_STATE_INCOME_TAX_RATE = 0.025;
@@ -343,23 +346,29 @@ export default function ExpensesPage() {
       let receiptBlobPath: string | null = editingExpense?.receipt_blob_path ?? null;
 
       if (form.receipt_file) {
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', form.receipt_file);
-        uploadFormData.append('year', form.expense_date.slice(0, 4));
+        const file = form.receipt_file;
 
-        const uploadRes = await fetch('/api/expenses/upload-receipt', {
-          method: 'POST',
-          body: uploadFormData,
-        });
-
-        if (!uploadRes.ok) {
-          const uploadErr = await uploadRes.json().catch(() => ({ error: 'Upload failed' }));
-          throw new Error(uploadErr.error || 'Failed to upload receipt');
+        if (!file.name || file.size === 0) {
+          throw new Error('Receipt file is empty');
         }
 
-        const uploadJson = await uploadRes.json();
-        receiptUrl = uploadJson.url;
-        receiptBlobPath = uploadJson.pathname;
+        if (file.size > MAX_RECEIPT_SIZE_BYTES) {
+          throw new Error('Receipt file must be 25MB or smaller');
+        }
+
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+        const receiptYear = form.expense_date.slice(0, 4);
+
+        // Uploads go browser → Blob storage directly. Posting the file to our
+        // own API instead capped receipts at Vercel's 4.5MB request-body limit.
+        const blob = await upload(`expenses/${receiptYear}/${Date.now()}-${safeName}`, file, {
+          access: 'public',
+          handleUploadUrl: '/api/expenses/upload-receipt',
+          multipart: file.size > MULTIPART_UPLOAD_THRESHOLD_BYTES,
+        });
+
+        receiptUrl = blob.url;
+        receiptBlobPath = blob.pathname;
       }
 
       const endpoint = editingExpense ? `/api/expenses/${editingExpense.id}` : '/api/expenses';

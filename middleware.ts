@@ -10,8 +10,17 @@ const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout']);
  *  - /api/cron/*  → Vercel Cron, already gated on x-vercel-cron / CRON_SECRET.
  *                   Gating these too would silently kill reminders and texts.
  *  - /api/health  → uptime checks; returns status only, no CRM data.
+ *  - /api/expenses/upload-receipt
+ *                 → Vercel Blob posts the upload-completed callback here with a
+ *                   signature instead of the cookie. The route checks the
+ *                   session itself before minting an upload token, and
+ *                   handleUpload verifies the signature on the callback.
  */
-const SELF_AUTHENTICATED_PREFIXES = ['/api/cron', '/api/health'];
+const SELF_AUTHENTICATED_PREFIXES = [
+  '/api/cron',
+  '/api/health',
+  '/api/expenses/upload-receipt',
+];
 
 export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
