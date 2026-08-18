@@ -15,11 +15,16 @@ const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/logout']);
  *                   signature instead of the cookie. The route checks the
  *                   session itself before minting an upload token, and
  *                   handleUpload verifies the signature on the callback.
+ *  - /api/integrations
+ *                 → the booking app posts confirmed /book requests here to turn
+ *                   them into CRM sessions. The route checks BRIDGE_SECRET
+ *                   itself before writing anything.
  */
 const SELF_AUTHENTICATED_PREFIXES = [
   '/api/cron',
   '/api/health',
   '/api/expenses/upload-receipt',
+  '/api/integrations',
 ];
 
 export async function middleware(request: NextRequest) {

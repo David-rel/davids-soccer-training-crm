@@ -1,18 +1,8 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
-import { createSessionReminders } from '@/lib/reminders';
-import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
-import { syncSessionToGoogleCalendarsSafe } from '@/lib/google-calendar';
-import {
-  defaultSessionEndFromStart,
-  ensureParentEmailInGuestList,
-  ensureSessionCalendarColumns,
-  isEndAfterStart,
-  normalizeSessionTitle,
-  parseGuestEmails,
-} from '@/lib/session-calendar-fields';
+import { createSession } from '@/lib/create-session';
+import { ensureSessionCalendarColumns } from '@/lib/session-calendar-fields';
 import { ensureStaffTables } from '@/app/api/staff/route';
-import { notifyCoachOfAssignment } from '@/lib/coach-notifications';
 import { NextRequest } from 'next/server';
 
 export const dynamic = 'force-dynamic';
@@ -60,134 +50,10 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    await ensureSessionCalendarColumns();
-    await ensureStaffTables();
-
     const body = await request.json();
-    const {
-      parent_id,
-      player_ids,
-      session_date,
-      session_end_date,
-      location,
-      price,
-      package_id,
-      notes,
-      coach_id,
-    } = body;
-
-    if (!parent_id || !session_date) {
-      return errorResponse('Parent and session date are required', 400);
-    }
-    if ('send_email_updates' in body && typeof body.send_email_updates !== 'boolean') {
-      return errorResponse('send_email_updates must be a boolean', 400);
-    }
-
-    const normalizedTitle = normalizeSessionTitle(body.title);
-    const sendEmailUpdates = body.send_email_updates === true;
-    const parentResult = await query(`SELECT id, email FROM crm_parents WHERE id = $1 LIMIT 1`, [parent_id]);
-    if (parentResult.rows.length === 0) {
-      return errorResponse('Parent not found', 404);
-    }
-    const parentEmail = parentResult.rows[0].email as string | null;
-
-    const { emails: parsedGuestEmails, invalid: invalidGuestEmails } = parseGuestEmails(body.guest_emails);
-    if (invalidGuestEmails.length > 0) {
-      return errorResponse(`Invalid guest email(s): ${invalidGuestEmails.join(', ')}`, 400);
-    }
-    const guestEmails = ensureParentEmailInGuestList(parsedGuestEmails, parentEmail);
-
-    // Resolve the coach: an explicit coach_id wins; otherwise fall back to the
-    // package's coach, then the coach the selected players are assigned to
-    // (modal, tie-break by lowest staff id). This mirrors the inference used by
-    // the payment tracker, so package-scheduled sessions get a real coach on
-    // the row (and that coach gets texted) instead of coming through coach-less.
-    let resolvedCoachId: number | null = coach_id ? Number(coach_id) : null;
-    if (resolvedCoachId == null && package_id) {
-      const pkgCoach = await query(
-        `SELECT coach_id FROM crm_packages WHERE id = $1 LIMIT 1`,
-        [package_id]
-      );
-      if (pkgCoach.rows[0]?.coach_id != null) resolvedCoachId = Number(pkgCoach.rows[0].coach_id);
-    }
-    if (resolvedCoachId == null && Array.isArray(player_ids) && player_ids.length > 0) {
-      const playerCoach = await query(
-        `SELECT coach_id FROM crm_players
-         WHERE id = ANY($1::int[]) AND coach_id IS NOT NULL
-         GROUP BY coach_id
-         ORDER BY COUNT(*) DESC, coach_id ASC
-         LIMIT 1`,
-        [player_ids]
-      );
-      if (playerCoach.rows[0]?.coach_id != null) resolvedCoachId = Number(playerCoach.rows[0].coach_id);
-    }
-
-    const sessionDateUTC = parseDatetimeLocalAsArizona(session_date);
-    const sessionEndDateUTC = session_end_date
-      ? parseDatetimeLocalAsArizona(session_end_date)
-      : defaultSessionEndFromStart(sessionDateUTC);
-
-    if (!isEndAfterStart(sessionDateUTC, sessionEndDateUTC)) {
-      return errorResponse('Session end time must be after start time', 400);
-    }
-
-    const result = await query(
-      `INSERT INTO crm_sessions (parent_id, title, session_date, session_end_date, location, price, package_id, notes, guest_emails, send_email_updates, coach_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       RETURNING *`,
-      [
-        parent_id,
-        normalizedTitle,
-        sessionDateUTC,
-        sessionEndDateUTC,
-        location || null,
-        price || null,
-        package_id || null,
-        notes || null,
-        guestEmails,
-        sendEmailUpdates,
-        resolvedCoachId,
-      ]
-    );
-
-    const session = result.rows[0];
-
-    // Add players to junction table if provided
-    if (player_ids && Array.isArray(player_ids) && player_ids.length > 0) {
-      for (const playerId of player_ids) {
-        await query(
-          `INSERT INTO crm_session_players (session_id, player_id) VALUES ($1, $2)`,
-          [session.id, playerId]
-        );
-      }
-    }
-
-    // Text the assigned coach that they have a new session (best-effort).
-    if (resolvedCoachId != null) {
-      await notifyCoachOfAssignment('session', session.id, resolvedCoachId);
-    }
-
-    // Create 48h, 24h, 6h reminders (use the UTC date)
-    await createSessionReminders(parent_id, sessionDateUTC, {
-      sessionId: session.id,
-      sessionEndDate: sessionEndDateUTC,
-    });
-
-    // Update parent's last activity timestamp
-    await query(
-      `UPDATE crm_parents SET last_activity_at = CURRENT_TIMESTAMP WHERE id = $1`,
-      [parent_id]
-    );
-
-    // New session booked — cancel any pending drop-off follow-ups (they're back!)
-    await query(
-      `DELETE FROM crm_reminders WHERE parent_id = $1 AND reminder_category IN ('post_session_follow_up', 'post_first_session_follow_up') AND sent = false`,
-      [parent_id]
-    );
-
-    await syncSessionToGoogleCalendarsSafe(session.id, 'session create');
-
-    return jsonResponse(session, 201);
+    const result = await createSession(body);
+    if (!result.ok) return errorResponse(result.error, result.status);
+    return jsonResponse(result.session, 201);
   } catch (error) {
     console.error('Error creating session:', error);
     return errorResponse('Failed to create session');
