@@ -1,4 +1,5 @@
 import { query } from "@/lib/db";
+import { ensureSessionExtrasTables } from '@/lib/session-extras';
 import { jsonResponse, errorResponse } from "@/lib/api-helpers";
 import { ensureStaffTables } from "@/app/api/staff/route";
 
@@ -26,6 +27,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   try {
+    await ensureSessionExtrasTables();
     await ensureStaffTables();
     // Use Arizona timezone for all date calculations.
     const { start: todayStart, end: todayEnd } = getTodayBoundsArizona();
@@ -75,7 +77,21 @@ export async function GET(request: NextRequest) {
     const firstSessionsResult = await query(
       `SELECT fs.*, p.name as parent_name, st.name as coach_name,
         ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL) as player_names,
-        ARRAY_AGG(pl.id) FILTER (WHERE pl.id IS NOT NULL) as player_ids
+        ARRAY_AGG(pl.id) FILTER (WHERE pl.id IS NOT NULL) as player_ids,
+        COALESCE((
+          SELECT json_agg(json_build_object(
+                   'player_id', xpl.id,
+                   'player_name', xpl.name,
+                   'parent_id', xpar.id,
+                   'parent_name', xpar.name,
+                   'parent_email', xpar.email,
+                   'parent_phone', xpar.phone
+                 ) ORDER BY xpar.name, xpl.name)
+          FROM crm_first_session_extras x
+          JOIN crm_players xpl ON xpl.id = x.player_id
+          JOIN crm_parents xpar ON xpar.id = xpl.parent_id
+          WHERE x.first_session_id = fs.id
+        ), '[]'::json) AS extras
        FROM crm_first_sessions fs
        JOIN crm_parents p ON p.id = fs.parent_id
        LEFT JOIN crm_staff st ON st.id = fs.coach_id
@@ -93,7 +109,21 @@ export async function GET(request: NextRequest) {
     const sessionsResult = await query(
       `SELECT s.*, p.name as parent_name, st.name as coach_name,
         ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL) as player_names,
-        ARRAY_AGG(pl.id) FILTER (WHERE pl.id IS NOT NULL) as player_ids
+        ARRAY_AGG(pl.id) FILTER (WHERE pl.id IS NOT NULL) as player_ids,
+        COALESCE((
+          SELECT json_agg(json_build_object(
+                   'player_id', xpl.id,
+                   'player_name', xpl.name,
+                   'parent_id', xpar.id,
+                   'parent_name', xpar.name,
+                   'parent_email', xpar.email,
+                   'parent_phone', xpar.phone
+                 ) ORDER BY xpar.name, xpl.name)
+          FROM crm_session_extras x
+          JOIN crm_players xpl ON xpl.id = x.player_id
+          JOIN crm_parents xpar ON xpar.id = xpl.parent_id
+          WHERE x.session_id = s.id
+        ), '[]'::json) AS extras
        FROM crm_sessions s
        JOIN crm_parents p ON p.id = s.parent_id
        LEFT JOIN crm_staff st ON st.id = s.coach_id
@@ -215,7 +245,21 @@ export async function GET(request: NextRequest) {
     const upcomingFirstSessionsResult = await query(
       `SELECT fs.*, p.name as parent_name, st.name as coach_name,
         ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL) as player_names,
-        ARRAY_AGG(pl.id) FILTER (WHERE pl.id IS NOT NULL) as player_ids
+        ARRAY_AGG(pl.id) FILTER (WHERE pl.id IS NOT NULL) as player_ids,
+        COALESCE((
+          SELECT json_agg(json_build_object(
+                   'player_id', xpl.id,
+                   'player_name', xpl.name,
+                   'parent_id', xpar.id,
+                   'parent_name', xpar.name,
+                   'parent_email', xpar.email,
+                   'parent_phone', xpar.phone
+                 ) ORDER BY xpar.name, xpl.name)
+          FROM crm_first_session_extras x
+          JOIN crm_players xpl ON xpl.id = x.player_id
+          JOIN crm_parents xpar ON xpar.id = xpl.parent_id
+          WHERE x.first_session_id = fs.id
+        ), '[]'::json) AS extras
        FROM crm_first_sessions fs
        JOIN crm_parents p ON p.id = fs.parent_id
        LEFT JOIN crm_staff st ON st.id = fs.coach_id
@@ -233,7 +277,21 @@ export async function GET(request: NextRequest) {
     const upcomingSessionsResult = await query(
       `SELECT s.*, p.name as parent_name, st.name as coach_name,
         ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL) as player_names,
-        ARRAY_AGG(pl.id) FILTER (WHERE pl.id IS NOT NULL) as player_ids
+        ARRAY_AGG(pl.id) FILTER (WHERE pl.id IS NOT NULL) as player_ids,
+        COALESCE((
+          SELECT json_agg(json_build_object(
+                   'player_id', xpl.id,
+                   'player_name', xpl.name,
+                   'parent_id', xpar.id,
+                   'parent_name', xpar.name,
+                   'parent_email', xpar.email,
+                   'parent_phone', xpar.phone
+                 ) ORDER BY xpar.name, xpl.name)
+          FROM crm_session_extras x
+          JOIN crm_players xpl ON xpl.id = x.player_id
+          JOIN crm_parents xpar ON xpar.id = xpl.parent_id
+          WHERE x.session_id = s.id
+        ), '[]'::json) AS extras
        FROM crm_sessions s
        JOIN crm_parents p ON p.id = s.parent_id
        LEFT JOIN crm_staff st ON st.id = s.coach_id

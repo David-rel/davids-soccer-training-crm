@@ -13,6 +13,7 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Checkbox from '@mui/material/Checkbox';
 import type { Parent, Player } from '@/lib/types';
 import GooglePlacesTextField from '@/components/common/GooglePlacesTextField';
+import ExtraPlayersPicker from '@/components/sessions/ExtraPlayersPicker';
 
 function addOneHour(datetimeLocal: string): string {
   const start = new Date(datetimeLocal);
@@ -35,6 +36,7 @@ export default function SessionForm() {
   const [parentId, setParentId] = useState(preselectedParentId || '');
   const [packageId] = useState(preselectedPackageId || '');
   const [playerIds, setPlayerIds] = useState<string[]>([]);
+  const [extraPlayerIds, setExtraPlayerIds] = useState<number[]>([]);
   const [sessionDate, setSessionDate] = useState('');
   const [sessionEndDate, setSessionEndDate] = useState('');
   const [sessionTitle, setSessionTitle] = useState('');
@@ -132,6 +134,7 @@ export default function SessionForm() {
           .map((email) => email.trim())
           .filter(Boolean),
         send_email_updates: sendEmailUpdates,
+        extra_player_ids: extraPlayerIds,
       };
 
       if (isFirstSession) {
@@ -184,7 +187,7 @@ export default function SessionForm() {
             <TextField
               label="Parent *"
               value={parentId}
-              onChange={(e) => { setParentId(e.target.value); setPlayerIds([]); }}
+              onChange={(e) => { setParentId(e.target.value); setPlayerIds([]); setExtraPlayerIds([]); }}
               select
               fullWidth
               required
@@ -268,6 +271,14 @@ export default function SessionForm() {
             {!packageId && (
               <TextField label="Price ($)" value={price} onChange={(e) => setPrice(e.target.value)} type="number" fullWidth />
             )}
+          </Box>
+
+          <Box sx={{ mt: 2 }}>
+            <ExtraPlayersPicker
+              value={extraPlayerIds}
+              onChange={setExtraPlayerIds}
+              hostParentId={parentId ? parseInt(parentId) : null}
+            />
           </Box>
 
           <Box sx={{ mt: 2 }}>

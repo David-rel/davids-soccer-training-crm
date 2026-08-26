@@ -24,6 +24,7 @@ import CheckIcon from '@mui/icons-material/Check';
 import UndoIcon from '@mui/icons-material/Undo';
 import { formatArizonaDateTime, toDatetimeLocal } from '@/lib/timezone';
 import GooglePlacesTextField from '@/components/common/GooglePlacesTextField';
+import ExtraPlayersPicker from '@/components/sessions/ExtraPlayersPicker';
 
 interface SessionRow {
   id: number;
@@ -48,11 +49,22 @@ interface SessionRow {
   deposit_amount?: number | null;
   coach_id?: number | null;
   coach_name?: string | null;
+  extras?: SessionExtra[] | null;
 }
 
 interface Player {
   id: number;
   name: string;
+}
+
+/** A player from another family attached to this session. */
+interface SessionExtra {
+  player_id: number;
+  player_name: string;
+  parent_id: number;
+  parent_name: string;
+  parent_email: string | null;
+  parent_phone: string | null;
 }
 
 type SessionType = 'first' | 'regular';
@@ -89,8 +101,10 @@ export default function SessionList() {
     guest_emails: '',
     send_email_updates: false,
     player_ids: [] as number[],
+    extra_player_ids: [] as number[],
     coach_id: '' as string,
   });
+  const [editError, setEditError] = useState<string | null>(null);
   const [availablePlayers, setAvailablePlayers] = useState<Player[]>([]);
   const [staff, setStaff] = useState<{ id: number; name: string }[]>([]);
 
@@ -300,13 +314,16 @@ export default function SessionList() {
         : (session.parent_email || liveParentEmail || ''),
       send_email_updates: session.send_email_updates === true,
       player_ids: session.player_ids || [],
+      extra_player_ids: (session.extras || []).map((extra) => extra.player_id),
       coach_id: session.coach_id != null ? String(session.coach_id) : '',
     });
+    setEditError(null);
     setEditDialog({ session, type });
   };
 
   const handleEdit = async () => {
     if (!editDialog) return;
+    setEditError(null);
     const { session, type } = editDialog;
     const endpoint = type === 'first'
       ? `/api/first-sessions/${session.id}`
@@ -344,6 +361,26 @@ export default function SessionList() {
         player_ids: editForm.player_ids,
       }),
     });
+
+    // Extras (other families' players) live in their own table and carry their
+    // parents' contact info, calendar invites, and reminders.
+    const extrasEndpoint = type === 'first'
+      ? `/api/first-sessions/${session.id}/extras`
+      : `/api/sessions/${session.id}/extras`;
+
+    const extrasRes = await fetch(extrasEndpoint, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        extra_player_ids: editForm.extra_player_ids,
+      }),
+    });
+
+    if (!extrasRes.ok) {
+      const error = await extrasRes.json().catch(() => null);
+      setEditError(error?.error || 'Failed to save extra players.');
+      return;
+    }
 
     setEditDialog(null);
     fetchSessions();
@@ -426,6 +463,14 @@ export default function SessionList() {
                         ({session.player_names.join(', ')})
                       </Typography>
                     )}
+                    {session.extras && session.extras.length > 0 && (
+                      <Chip
+                        label={`+${session.extras.length} extra${session.extras.length > 1 ? 's' : ''}`}
+                        size="small"
+                        color="secondary"
+                        variant="outlined"
+                      />
+                    )}
                     {session.sessionType === 'first' && (
                       <Chip label="First Session" size="small" color="primary" />
                     )}
@@ -444,6 +489,25 @@ export default function SessionList() {
                     {session.location && ` — ${session.location}`}
                     {session.price && ` — $${session.price}`}
                   </Typography>
+                  {session.extras && session.extras.length > 0 && (
+                    <Box sx={{ mt: 0.5 }}>
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                        Extras ({session.extras.length}):
+                      </Typography>
+                      {session.extras.map((extra) => (
+                        <Typography
+                          key={extra.player_id}
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{ pl: 1 }}
+                        >
+                          • {extra.player_name} — {extra.parent_name}
+                          {extra.parent_phone && ` · ${extra.parent_phone}`}
+                          {extra.parent_email && ` · ${extra.parent_email}`}
+                        </Typography>
+                      ))}
+                    </Box>
+                  )}
                   {session.guest_emails && session.guest_emails.length > 0 && (
                     <Typography variant="body2" color="text.secondary">
                       Guests: {session.guest_emails.join(', ')}
@@ -687,6 +751,11 @@ export default function SessionList() {
                 ))}
               </TextField>
             )}
+            <ExtraPlayersPicker
+              value={editForm.extra_player_ids}
+              onChange={(ids) => setEditForm({ ...editForm, extra_player_ids: ids })}
+              hostParentId={editDialog?.session.parent_id ?? null}
+            />
             <TextField
               label="Coach"
               select
@@ -703,9 +772,16 @@ export default function SessionList() {
             </TextField>
           </Box>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setEditDialog(null)}>Cancel</Button>
-          <Button onClick={handleEdit} variant="contained">Save</Button>
+        <DialogActions sx={{ flexDirection: 'column', alignItems: 'stretch', gap: 1 }}>
+          {editError && (
+            <Typography variant="body2" color="error.main" sx={{ px: 1 }}>
+              {editError}
+            </Typography>
+          )}
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+            <Button onClick={() => setEditDialog(null)}>Cancel</Button>
+            <Button onClick={handleEdit} variant="contained">Save</Button>
+          </Box>
         </DialogActions>
       </Dialog>
 

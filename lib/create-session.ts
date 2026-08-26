@@ -28,6 +28,7 @@ import {
   defaultFirstSessionEndFromStart,
   ensureFirstSessionCalendarColumns,
 } from '@/lib/first-session-calendar-fields';
+import { parseExtraPlayerIds, setSessionExtras } from '@/lib/session-extras';
 import { ensureStaffTables } from '@/app/api/staff/route';
 
 export type CreateResult =
@@ -50,6 +51,8 @@ export interface CreateSessionBody {
   send_email_updates?: unknown;
   deposit_paid?: unknown;
   deposit_amount?: unknown;
+  /** Players from OTHER families riding along on this session. See lib/session-extras.ts. */
+  extra_player_ids?: unknown;
 }
 
 export async function createSession(body: CreateSessionBody): Promise<CreateResult> {
@@ -151,6 +154,16 @@ export async function createSession(body: CreateSessionBody): Promise<CreateResu
         `INSERT INTO crm_session_players (session_id, player_id) VALUES ($1, $2)`,
         [session.id, playerId]
       );
+    }
+  }
+
+  // Attach any extras (other families' players). This also schedules the
+  // parent-facing reminders for their parents.
+  const extraPlayerIds = parseExtraPlayerIds(body.extra_player_ids);
+  if (extraPlayerIds.length > 0) {
+    const extrasResult = await setSessionExtras('session', session.id, extraPlayerIds);
+    if (!extrasResult.ok) {
+      return { ok: false, error: extrasResult.error, status: extrasResult.status };
     }
   }
 
@@ -260,6 +273,14 @@ export async function createFirstSession(body: CreateSessionBody): Promise<Creat
         `INSERT INTO crm_first_session_players (first_session_id, player_id) VALUES ($1, $2)`,
         [session.id, playerId]
       );
+    }
+  }
+
+  const extraFirstPlayerIds = parseExtraPlayerIds(body.extra_player_ids);
+  if (extraFirstPlayerIds.length > 0) {
+    const extrasResult = await setSessionExtras('first', session.id, extraFirstPlayerIds);
+    if (!extrasResult.ok) {
+      return { ok: false, error: extrasResult.error, status: extrasResult.status };
     }
   }
 

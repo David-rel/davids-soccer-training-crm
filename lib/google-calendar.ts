@@ -2,6 +2,8 @@ import { JWT, OAuth2Client } from 'google-auth-library';
 import { query } from '@/lib/db';
 import { ensureFirstSessionCalendarColumns } from '@/lib/first-session-calendar-fields';
 import { ensureSessionCalendarColumns, parseGuestEmails } from '@/lib/session-calendar-fields';
+import type { SessionExtra } from '@/lib/session-extras';
+import { formatExtrasForDescription } from '@/lib/session-extras';
 
 const GOOGLE_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar';
 const GOOGLE_CALENDAR_API_BASE = 'https://www.googleapis.com/calendar/v3';
@@ -57,6 +59,8 @@ interface SessionSyncRow {
   parent_name: string;
   coach_name: string | null;
   player_names: string[];
+  /** Other families' players riding along on this session. */
+  extras: SessionExtra[];
 }
 
 interface FirstSessionSyncRow {
@@ -75,6 +79,8 @@ interface FirstSessionSyncRow {
   guest_emails: string[] | null;
   send_email_updates: boolean | null;
   player_names: string[];
+  /** Other families' players riding along on this session. */
+  extras: SessionExtra[];
 }
 
 interface GroupSessionSyncRow {
@@ -388,6 +394,24 @@ async function getSessionForSync(sessionId: string | number): Promise<SessionSyn
        s.send_email_updates,
        p.name AS parent_name,
        st.name AS coach_name,
+       COALESCE((
+         SELECT json_agg(json_build_object(
+                  'player_id', xpl.id,
+                  'player_name', xpl.name,
+                  'player_age', xpl.age,
+                  'player_team', xpl.team,
+                  'parent_id', xpar.id,
+                  'parent_name', xpar.name,
+                  'parent_email', xpar.email,
+                  'parent_phone', xpar.phone,
+                  'secondary_parent_name', xpar.secondary_parent_name,
+                  'notes', x.notes
+                ) ORDER BY xpar.name, xpl.name)
+         FROM crm_session_extras x
+         JOIN crm_players xpl ON xpl.id = x.player_id
+         JOIN crm_parents xpar ON xpar.id = xpl.parent_id
+         WHERE x.session_id = s.id
+       ), '[]'::json) AS extras,
        COALESCE(ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL), '{}') AS player_names
      FROM crm_sessions s
      JOIN crm_parents p ON p.id = s.parent_id
@@ -404,6 +428,7 @@ async function getSessionForSync(sessionId: string | number): Promise<SessionSyn
   const row = result.rows[0] as SessionSyncRow;
   row.player_names = Array.isArray(row.player_names) ? row.player_names.filter(Boolean) : [];
   row.guest_emails = Array.isArray(row.guest_emails) ? row.guest_emails : [];
+  row.extras = Array.isArray(row.extras) ? row.extras : [];
   return row;
 }
 
@@ -426,6 +451,24 @@ async function getFirstSessionForSync(
        st.name AS coach_name,
        fs.guest_emails,
        fs.send_email_updates,
+       COALESCE((
+         SELECT json_agg(json_build_object(
+                  'player_id', xpl.id,
+                  'player_name', xpl.name,
+                  'player_age', xpl.age,
+                  'player_team', xpl.team,
+                  'parent_id', xpar.id,
+                  'parent_name', xpar.name,
+                  'parent_email', xpar.email,
+                  'parent_phone', xpar.phone,
+                  'secondary_parent_name', xpar.secondary_parent_name,
+                  'notes', x.notes
+                ) ORDER BY xpar.name, xpl.name)
+         FROM crm_first_session_extras x
+         JOIN crm_players xpl ON xpl.id = x.player_id
+         JOIN crm_parents xpar ON xpar.id = xpl.parent_id
+         WHERE x.first_session_id = fs.id
+       ), '[]'::json) AS extras,
        COALESCE(ARRAY_AGG(pl.name) FILTER (WHERE pl.name IS NOT NULL), '{}') AS player_names
      FROM crm_first_sessions fs
      JOIN crm_parents p ON p.id = fs.parent_id
@@ -442,6 +485,7 @@ async function getFirstSessionForSync(
   const row = result.rows[0] as FirstSessionSyncRow;
   row.player_names = Array.isArray(row.player_names) ? row.player_names.filter(Boolean) : [];
   row.guest_emails = Array.isArray(row.guest_emails) ? row.guest_emails : [];
+  row.extras = Array.isArray(row.extras) ? row.extras : [];
   return row;
 }
 
@@ -523,11 +567,20 @@ function buildGoogleEventPayload(session: SessionSyncRow): Record<string, unknow
   if (session.player_names.length > 0) {
     details.push(`Players: ${session.player_names.join(', ')}`);
   }
+  if (session.extras.length > 0) {
+    details.push(`Extras: ${formatExtrasForDescription(session.extras).join('; ')}`);
+  }
   if (session.notes && session.notes.trim()) {
     details.push(`Notes: ${session.notes.trim()}`);
   }
 
-  const attendeeEmails = parseGuestEmails(session.guest_emails || []).emails;
+  // Extra parents are merged in here rather than stored on `guest_emails` so
+  // that removing an extra also drops them from the invite, and so a hand-edited
+  // guest list never has to account for them.
+  const attendeeEmails = parseGuestEmails([
+    ...(session.guest_emails || []),
+    ...session.extras.map((extra) => extra.parent_email || ''),
+  ]).emails;
   const baseSummary = session.title?.trim()
     ? session.title.trim()
     : `${sessionType}: ${session.parent_name}`;
@@ -566,6 +619,9 @@ function buildFirstSessionGoogleEventPayload(firstSession: FirstSessionSyncRow):
   if (firstSession.player_names.length > 0) {
     details.push(`Players: ${firstSession.player_names.join(', ')}`);
   }
+  if (firstSession.extras.length > 0) {
+    details.push(`Extras: ${formatExtrasForDescription(firstSession.extras).join('; ')}`);
+  }
   if (firstSession.notes && firstSession.notes.trim()) {
     details.push(`Notes: ${firstSession.notes.trim()}`);
   }
@@ -573,6 +629,7 @@ function buildFirstSessionGoogleEventPayload(firstSession: FirstSessionSyncRow):
   const attendeeCandidates = [
     ...(Array.isArray(firstSession.guest_emails) ? firstSession.guest_emails : []),
     ...(firstSession.parent_email ? [firstSession.parent_email] : []),
+    ...firstSession.extras.map((extra) => extra.parent_email || ''),
   ];
   const attendeeEmails = parseGuestEmails(attendeeCandidates).emails;
   const baseSummary = firstSession.title?.trim()

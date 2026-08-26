@@ -1,6 +1,7 @@
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { createSessionReminders } from '@/lib/reminders';
+import { refreshExtraParentReminders } from '@/lib/session-extras';
 import { notifyCoachOfAssignment } from '@/lib/coach-notifications';
 import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
 import {
@@ -180,6 +181,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         firstSessionId: session.id,
         sessionEndDate: session.session_end_date,
       });
+
+      // The wipe above cleared the extra parents' reminders too, so rebuild
+      // theirs against the new time.
+      await refreshExtraParentReminders('first', session.id);
     }
 
     await syncFirstSessionToGoogleCalendarsSafe(session.id, 'first session patch');

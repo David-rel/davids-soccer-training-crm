@@ -99,8 +99,27 @@ export interface FirstSession {
   notes: string | null;
   coach_id: number | null;
   coach_name?: string | null;
+  extras?: SessionExtra[];
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * A player from another family attached to a one-off session — the "mini group"
+ * case. Roster-and-contact only: extras never affect session pricing, revenue,
+ * or coach payout. See lib/session-extras.ts.
+ */
+export interface SessionExtra {
+  player_id: number;
+  player_name: string;
+  player_age: number | null;
+  player_team: string | null;
+  parent_id: number;
+  parent_name: string;
+  parent_email: string | null;
+  parent_phone: string | null;
+  secondary_parent_name: string | null;
+  notes: string | null;
 }
 
 export interface Session {
@@ -123,6 +142,7 @@ export interface Session {
   notes: string | null;
   coach_id: number | null;
   coach_name?: string | null;
+  extras?: SessionExtra[];
   created_at: string;
   updated_at: string;
 }

@@ -14,6 +14,7 @@ import {
   normalizeSessionTitle,
   parseGuestEmails,
 } from '@/lib/session-calendar-fields';
+import { refreshExtraParentReminders } from '@/lib/session-extras';
 import { ensureStaffTables } from '@/app/api/staff/route';
 import { notifyCoachOfAssignment } from '@/lib/coach-notifications';
 import { NextRequest } from 'next/server';
@@ -180,6 +181,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         sessionId: session.id,
         sessionEndDate: session.session_end_date,
       });
+
+      // The wipe above cleared the extra parents' reminders too, so rebuild
+      // theirs against the new time.
+      await refreshExtraParentReminders('session', session.id);
     }
 
     await syncSessionToGoogleCalendarsSafe(session.id, 'session patch');

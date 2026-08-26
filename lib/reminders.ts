@@ -51,10 +51,27 @@ export const RETIRED_SESSION_REMINDER_TYPES = [
 
 export type SessionReminderType = (typeof SESSION_REMINDER_INTERVALS)[number]["type"];
 
+/**
+ * Intervals that text the coach rather than the parent. These are scheduled
+ * once per session (off the host parent), never once per attending family.
+ */
+export const COACH_SESSION_REMINDER_TYPES = new Set<string>(["coach_session_start"]);
+
 export async function createSessionReminders(
   parentId: number,
   sessionDate: string | Date,
-  opts: { firstSessionId?: number; sessionId?: number; sessionEndDate?: string | Date | null }
+  opts: {
+    firstSessionId?: number;
+    sessionId?: number;
+    sessionEndDate?: string | Date | null;
+    /**
+     * Skip the coach-facing intervals. Set when scheduling reminders for an
+     * "extra" parent whose player was added onto someone else's session: they
+     * should get the parent texts, but the coach must only be texted once for
+     * the session, not once per family attending it.
+     */
+    skipCoachReminders?: boolean;
+  }
 ) {
   // Session times are stored as UTC-coded values. Keep reminder offsets in UTC math
   // so 48h/24h/6h always align with the actual session instant in production.
@@ -69,6 +86,10 @@ export async function createSessionReminders(
   let createdCount = 0;
 
   for (const interval of SESSION_REMINDER_INTERVALS) {
+    if (opts.skipCoachReminders && COACH_SESSION_REMINDER_TYPES.has(interval.type)) {
+      continue;
+    }
+
     const anchorUtc =
       interval.type === "parent_session_plus_120m"
         ? sessionEndDateUtc

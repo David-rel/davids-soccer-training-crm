@@ -6,6 +6,7 @@ import {
   ReminderDefaultRow,
 } from "@/lib/auto-reminders";
 import { RETIRED_SESSION_REMINDER_TYPES } from "@/lib/reminders";
+import { ensureSessionExtrasTables } from "@/lib/session-extras";
 import { formatArizonaDateTime, getDateBoundsArizona } from "@/lib/timezone";
 import {
   getCoachPhoneNumber,
@@ -36,7 +37,14 @@ interface DueReminderRow {
   parent_phone: string | null;
   session_date: string | Date | null;
   primary_crm_player_id: number | null;
+  /**
+   * The players on this session that belong to THIS reminder's parent. A
+   * session can carry "extras" from other families, and each parent's text
+   * should name their own kid, not the whole field.
+   */
   player_names: string[] | null;
+  /** Every player on the session, host roster plus extras. Coach-facing only. */
+  roster_player_names: string[] | null;
   total_sessions_through_current: number | null;
 }
 
@@ -479,6 +487,7 @@ async function buildMessage(
   const sessionTimeText = formatReminderTime(sessionDate);
   const parentDisplay = toParentDisplayName(row);
   const playerLabel = toPlayerLabel(row.player_names);
+  const rosterLabel = toPlayerLabel(row.roster_player_names || row.player_names);
   const dateKey = formatInTimeZone(sessionDate, "America/Phoenix", "yyyy-MM-dd");
 
   const profileUrl = templateUrl(process.env.PARENT_PROFILE_URL_TEMPLATE, {
@@ -612,7 +621,7 @@ async function buildMessage(
       return {
         to: getCoachPhoneNumber(),
         body: wrapCoachMessage(
-          `Coach reminder: ${playerLabel} with ${parentDisplay} starts now (${sessionTimeText}). Get photos, videos, and sports drink ready.`
+          `Coach reminder: ${rosterLabel} with ${parentDisplay} starts now (${sessionTimeText}). Get photos, videos, and sports drink ready.`
         ),
       };
     }
@@ -806,6 +815,8 @@ async function processDueReminders(
   limit: number,
   options: ReminderProcessingOptions
 ): Promise<ReminderStats> {
+  // The query below reads the session-extras tables.
+  await ensureSessionExtrasTables();
   const defaultsMap = await getSessionReminderDefaultsMap();
   const dueReminders = await query(
     `SELECT
@@ -841,21 +852,94 @@ async function processDueReminders(
         s.player_id,
         fs.player_id
       ) as primary_crm_player_id,
+      -- Players on this session belonging to THIS reminder's parent. Extras
+      -- put other families on the same session, so an extra parent's text has
+      -- to name their own kid. Falls back to the host roster when the parent
+      -- has no player explicitly attached (older rows).
+      COALESCE(
+        NULLIF(
+          CASE
+            WHEN r.session_id IS NOT NULL THEN (
+              SELECT ARRAY_AGG(mine.name ORDER BY mine.created_at)
+              FROM (
+                SELECT pl.name, pl.created_at
+                FROM crm_session_players sp
+                JOIN crm_players pl ON pl.id = sp.player_id
+                WHERE sp.session_id = r.session_id AND pl.parent_id = r.parent_id
+                UNION
+                SELECT pl.name, pl.created_at
+                FROM crm_session_extras x
+                JOIN crm_players pl ON pl.id = x.player_id
+                WHERE x.session_id = r.session_id AND pl.parent_id = r.parent_id
+              ) mine
+            )
+            WHEN r.first_session_id IS NOT NULL THEN (
+              SELECT ARRAY_AGG(mine.name ORDER BY mine.created_at)
+              FROM (
+                SELECT pl.name, pl.created_at
+                FROM crm_first_session_players fsp
+                JOIN crm_players pl ON pl.id = fsp.player_id
+                WHERE fsp.first_session_id = r.first_session_id AND pl.parent_id = r.parent_id
+                UNION
+                SELECT pl.name, pl.created_at
+                FROM crm_first_session_extras x
+                JOIN crm_players pl ON pl.id = x.player_id
+                WHERE x.first_session_id = r.first_session_id AND pl.parent_id = r.parent_id
+              ) mine
+            )
+            ELSE NULL
+          END,
+          '{}'
+        ),
+        CASE
+          WHEN r.session_id IS NOT NULL THEN (
+            SELECT ARRAY_AGG(pl.name ORDER BY pl.created_at)
+            FROM crm_session_players sp
+            JOIN crm_players pl ON pl.id = sp.player_id
+            WHERE sp.session_id = r.session_id
+          )
+          WHEN r.first_session_id IS NOT NULL THEN (
+            SELECT ARRAY_AGG(pl.name ORDER BY pl.created_at)
+            FROM crm_first_session_players fsp
+            JOIN crm_players pl ON pl.id = fsp.player_id
+            WHERE fsp.first_session_id = r.first_session_id
+          )
+          ELSE NULL
+        END
+      ) as player_names,
+      -- Everyone on the session, host roster plus extras. The coach's text
+      -- names the whole group.
       CASE
         WHEN r.session_id IS NOT NULL THEN (
-          SELECT ARRAY_AGG(pl.name ORDER BY pl.created_at)
-          FROM crm_session_players sp
-          JOIN crm_players pl ON pl.id = sp.player_id
-          WHERE sp.session_id = r.session_id
+          SELECT ARRAY_AGG(everyone.name ORDER BY everyone.created_at)
+          FROM (
+            SELECT pl.name, pl.created_at
+            FROM crm_session_players sp
+            JOIN crm_players pl ON pl.id = sp.player_id
+            WHERE sp.session_id = r.session_id
+            UNION
+            SELECT pl.name, pl.created_at
+            FROM crm_session_extras x
+            JOIN crm_players pl ON pl.id = x.player_id
+            WHERE x.session_id = r.session_id
+          ) everyone
         )
         WHEN r.first_session_id IS NOT NULL THEN (
-          SELECT ARRAY_AGG(pl.name ORDER BY pl.created_at)
-          FROM crm_first_session_players fsp
-          JOIN crm_players pl ON pl.id = fsp.player_id
-          WHERE fsp.first_session_id = r.first_session_id
+          SELECT ARRAY_AGG(everyone.name ORDER BY everyone.created_at)
+          FROM (
+            SELECT pl.name, pl.created_at
+            FROM crm_first_session_players fsp
+            JOIN crm_players pl ON pl.id = fsp.player_id
+            WHERE fsp.first_session_id = r.first_session_id
+            UNION
+            SELECT pl.name, pl.created_at
+            FROM crm_first_session_extras x
+            JOIN crm_players pl ON pl.id = x.player_id
+            WHERE x.first_session_id = r.first_session_id
+          ) everyone
         )
         ELSE NULL
-      END as player_names,
+      END as roster_player_names,
       (
         SELECT COUNT(*)::int
         FROM (

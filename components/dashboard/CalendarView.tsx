@@ -29,6 +29,16 @@ const localizer = dateFnsLocalizer({
   locales,
 });
 
+/** A player from another family attached to a session. */
+interface SessionExtra {
+  player_id: number;
+  player_name: string;
+  parent_id: number;
+  parent_name: string;
+  parent_email: string | null;
+  parent_phone: string | null;
+}
+
 interface CalendarEvent {
   id: string;
   title: string;
@@ -38,6 +48,7 @@ interface CalendarEvent {
   resource?: {
     parent_name?: string;
     player_names?: string[];
+    extras?: SessionExtra[];
     location?: string;
     status?: string;
     reminder_type?: string;
@@ -62,6 +73,7 @@ interface DashboardData {
     id: number;
     parent_name: string;
     player_names?: string[];
+    extras?: SessionExtra[];
     session_date: string;
     location?: string;
     status?: string;
@@ -71,6 +83,7 @@ interface DashboardData {
     parent_name: string;
     title?: string | null;
     player_names?: string[];
+    extras?: SessionExtra[];
     session_date: string;
     session_end_date?: string | null;
     location?: string;
@@ -217,6 +230,7 @@ export default function CalendarView() {
             resource: {
               parent_name: session.parent_name,
               player_names: session.player_names,
+              extras: session.extras,
               location: session.location,
               status: session.status,
               originalStart: startDate,
@@ -241,6 +255,7 @@ export default function CalendarView() {
             resource: {
               parent_name: session.parent_name,
               player_names: session.player_names,
+              extras: session.extras,
               location: session.location,
               status: session.status,
               originalStart: startDate,
@@ -604,6 +619,22 @@ export default function CalendarView() {
                         <Typography variant="body1">
                           {selectedEvent.resource.player_names.join(", ")}
                         </Typography>
+                      </Box>
+                    )}
+
+                  {selectedEvent.resource?.extras &&
+                    selectedEvent.resource.extras.length > 0 && (
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Extras ({selectedEvent.resource.extras.length})
+                        </Typography>
+                        {selectedEvent.resource.extras.map((extra) => (
+                          <Typography key={extra.player_id} variant="body2">
+                            {extra.player_name} — {extra.parent_name}
+                            {extra.parent_phone && ` · ${extra.parent_phone}`}
+                            {extra.parent_email && ` · ${extra.parent_email}`}
+                          </Typography>
+                        ))}
                       </Box>
                     )}
 
