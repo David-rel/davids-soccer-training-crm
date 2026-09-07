@@ -3,6 +3,10 @@ import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { syncGroupSessionToGoogleCalendarsSafe } from '@/lib/google-calendar';
 import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
+import {
+  DEFAULT_GROUP_SESSION_IMAGE_URL,
+  buildDefaultGroupSessionTitle,
+} from '@/lib/group-sessions';
 
 export const dynamic = 'force-dynamic';
 
@@ -104,9 +108,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
 
-    const title = normalizeOptionalText(body.title);
     const description = normalizeOptionalText(body.description);
-    const imageUrl = normalizeOptionalText(body.image_url);
     const sessionDate = normalizeSessionDateInput(body.session_date);
     const sessionDateEnd = normalizeSessionDateInput(body.session_date_end);
     const location = normalizeOptionalText(body.location);
@@ -115,9 +117,15 @@ export async function POST(request: NextRequest) {
     const maxPlayers = Number(body.max_players);
     const price = body.price == null || String(body.price).trim() === '' ? null : Number(body.price);
 
-    if (!title || !imageUrl || !location || !sessionDate || !Number.isInteger(maxPlayers) || maxPlayers < 1) {
-      return errorResponse('Title, image URL, location, date, and max players are required', 400);
+    if (!location || !sessionDate || !Number.isInteger(maxPlayers) || maxPlayers < 1) {
+      return errorResponse('Location, date, and max players are required', 400);
     }
+
+    // Title and image are conveniences, not requirements: a blank title becomes
+    // "Group Training <date> at <location>" and a blank image falls back to the logo.
+    const title =
+      normalizeOptionalText(body.title) ?? buildDefaultGroupSessionTitle(sessionDate, location);
+    const imageUrl = normalizeOptionalText(body.image_url) ?? DEFAULT_GROUP_SESSION_IMAGE_URL;
 
     if (sessionDateEnd && new Date(sessionDateEnd) < new Date(sessionDate)) {
       return errorResponse('End date must be after start date', 400);

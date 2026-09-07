@@ -1,12 +1,15 @@
 import { NextRequest } from 'next/server';
 import { query } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
+import { ensurePlayerSignupCrmLink } from '@/lib/group-session-signups';
 
 export const dynamic = 'force-dynamic';
 
 interface SignupRow {
   id: number;
   group_session_id: number;
+  /** Set when the signup was added from the CRM rather than the public form. */
+  crm_player_id: number | null;
   first_name: string;
   last_name: string;
   age: number | null;
@@ -88,6 +91,7 @@ async function getSessionCapacity(groupSessionId: string) {
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
+    await ensurePlayerSignupCrmLink();
 
     const sessionExists = await query('SELECT id FROM group_sessions WHERE id = $1', [id]);
     if (sessionExists.rows.length === 0) {

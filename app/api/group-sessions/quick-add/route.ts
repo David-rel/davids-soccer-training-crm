@@ -3,6 +3,11 @@ import { getClient } from '@/lib/db';
 import { jsonResponse, errorResponse } from '@/lib/api-helpers';
 import { syncGroupSessionToGoogleCalendarsSafe } from '@/lib/google-calendar';
 import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
+import {
+  DEFAULT_GROUP_SESSION_IMAGE_URL,
+  DEFAULT_GROUP_SESSION_MAX_PLAYERS,
+  formatGroupSessionDateLabel,
+} from '@/lib/group-sessions';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,39 +72,6 @@ function getArizonaWeekday(date: string): string {
   }).format(safeDate);
 }
 
-function getOrdinal(day: number): string {
-  if (day >= 11 && day <= 13) return 'th';
-  const mod = day % 10;
-  if (mod === 1) return 'st';
-  if (mod === 2) return 'nd';
-  if (mod === 3) return 'rd';
-  return 'th';
-}
-
-function getTitleDateLabel(date: string): string {
-  const [year, month, day] = date.split('-').map((part) => Number(part));
-  const safeDate = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
-
-  const weekday = new Intl.DateTimeFormat('en-US', {
-    weekday: 'long',
-    timeZone: 'America/Phoenix',
-  }).format(safeDate);
-
-  const monthLabel = new Intl.DateTimeFormat('en-US', {
-    month: 'long',
-    timeZone: 'America/Phoenix',
-  }).format(safeDate);
-
-  const dayValue = Number(
-    new Intl.DateTimeFormat('en-US', {
-      day: 'numeric',
-      timeZone: 'America/Phoenix',
-    }).format(safeDate)
-  );
-
-  return `${weekday} ${monthLabel} ${dayValue}${getOrdinal(dayValue)}`;
-}
-
 export async function POST(request: NextRequest) {
   const client = await getClient();
 
@@ -110,13 +82,11 @@ export async function POST(request: NextRequest) {
     const sundayDate = normalizeRequiredText(body.sunday_date);
     const curriculum = normalizeRequiredText(body.curriculum);
     const location = normalizeRequiredText(body.location);
-    const imageUrl = normalizeRequiredText(body.image_url);
+    // Optional: falls back to the default logo when nothing is uploaded.
+    const imageUrl = normalizeOptionalText(body.image_url) ?? DEFAULT_GROUP_SESSION_IMAGE_URL;
 
-    if (!fridayDate || !sundayDate || !curriculum || !location || !imageUrl) {
-      return errorResponse(
-        'Friday date, Sunday date, curriculum, location, and image URL are required',
-        400
-      );
+    if (!fridayDate || !sundayDate || !curriculum || !location) {
+      return errorResponse('Friday date, Sunday date, curriculum, and location are required', 400);
     }
 
     if (!isValidDateInput(fridayDate) || !isValidDateInput(sundayDate)) {
@@ -134,12 +104,12 @@ export async function POST(request: NextRequest) {
     const dayConfigs = [
       {
         date: fridayDate,
-        label: getTitleDateLabel(fridayDate),
+        label: formatGroupSessionDateLabel(fridayDate),
         templates: FRIDAY_SESSION_TEMPLATES,
       },
       {
         date: sundayDate,
-        label: getTitleDateLabel(sundayDate),
+        label: formatGroupSessionDateLabel(sundayDate),
         templates: SUNDAY_SESSION_TEMPLATES,
       },
     ];
@@ -168,9 +138,18 @@ export async function POST(request: NextRequest) {
             curriculum,
             max_players
           )
-          VALUES ($1, $2, $3, $4, $5, $6, 50, $7, 12)
+          VALUES ($1, $2, $3, $4, $5, $6, 50, $7, $8)
           RETURNING id, title, session_date`,
-          [title, description, imageUrl, sessionDate, sessionDateEnd, location, curriculum]
+          [
+            title,
+            description,
+            imageUrl,
+            sessionDate,
+            sessionDateEnd,
+            location,
+            curriculum,
+            DEFAULT_GROUP_SESSION_MAX_PLAYERS,
+          ]
         );
 
         created.push(result.rows[0] as { id: number; title: string; session_date: string });

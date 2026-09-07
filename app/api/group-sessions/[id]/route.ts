@@ -6,6 +6,10 @@ import {
   syncGroupSessionToGoogleCalendarsSafe,
 } from '@/lib/google-calendar';
 import { parseDatetimeLocalAsArizona } from '@/lib/timezone';
+import {
+  DEFAULT_GROUP_SESSION_IMAGE_URL,
+  buildDefaultGroupSessionTitle,
+} from '@/lib/group-sessions';
 
 export const dynamic = 'force-dynamic';
 
@@ -123,9 +127,39 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const values: unknown[] = [];
     let paramIndex = 1;
 
+    // Only loaded when clearing the title forces us to rebuild the default one.
+    let existingRow: { session_date: string; location: string | null } | null = null;
+    const loadExistingRow = async () => {
+      if (!existingRow) {
+        const existing = await query(
+          'SELECT session_date, location FROM group_sessions WHERE id = $1',
+          [id]
+        );
+        if (existing.rows.length === 0) return null;
+        existingRow = existing.rows[0] as { session_date: string; location: string | null };
+      }
+      return existingRow;
+    };
+
     if ('title' in body) {
-      const title = normalizeOptionalText(body.title);
-      if (!title) return errorResponse('Title is required', 400);
+      let title = normalizeOptionalText(body.title);
+
+      // Clearing the title isn't an error — it re-derives the default one from
+      // whatever the session's date and location end up being.
+      if (!title) {
+        const existing = await loadExistingRow();
+        if (!existing) return errorResponse('Group session not found', 404);
+
+        const effectiveDate =
+          ('session_date' in body ? normalizeSessionDateInput(body.session_date) : null) ??
+          normalizeToUtcIso(existing.session_date);
+        const effectiveLocation =
+          ('location' in body ? normalizeOptionalText(body.location) : null) ?? existing.location;
+
+        if (!effectiveDate) return errorResponse('Session date is invalid', 400);
+        title = buildDefaultGroupSessionTitle(effectiveDate, effectiveLocation);
+      }
+
       fields.push(`title = $${paramIndex++}`);
       values.push(title);
     }
@@ -136,8 +170,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     if ('image_url' in body) {
-      const imageUrl = normalizeOptionalText(body.image_url);
-      if (!imageUrl) return errorResponse('Image URL is required', 400);
+      // Clearing the image falls back to the default logo rather than failing.
+      const imageUrl = normalizeOptionalText(body.image_url) ?? DEFAULT_GROUP_SESSION_IMAGE_URL;
       fields.push(`image_url = $${paramIndex++}`);
       values.push(imageUrl);
     }

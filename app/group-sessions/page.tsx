@@ -27,9 +27,16 @@ import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import GroupIcon from '@mui/icons-material/Group';
+import GroupAddIcon from '@mui/icons-material/GroupAdd';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import FlashOnIcon from '@mui/icons-material/FlashOn';
 import { formatArizonaDateTime, toDatetimeLocal } from '@/lib/timezone';
+import {
+  DEFAULT_GROUP_SESSION_IMAGE_URL,
+  DEFAULT_GROUP_SESSION_MAX_PLAYERS,
+  buildDefaultGroupSessionTitle,
+} from '@/lib/group-sessions';
+import CrmSignupPicker, { AddFromCrmResult } from '@/components/sessions/CrmSignupPicker';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,6 +61,8 @@ interface GroupSession {
 interface PlayerSignup {
   id: number;
   group_session_id: number;
+  /** Set when the signup came from the CRM rather than the public signup form. */
+  crm_player_id: number | null;
   first_name: string;
   last_name: string;
   age: number | null;
@@ -131,7 +140,7 @@ const emptySessionForm: SessionFormState = {
   location: '',
   price: '',
   curriculum: '',
-  max_players: '8',
+  max_players: String(DEFAULT_GROUP_SESSION_MAX_PLAYERS),
 };
 
 const emptyPlayerForm: PlayerFormState = {
@@ -207,6 +216,14 @@ export default function GroupSessionsPage() {
   const [editingPlayer, setEditingPlayer] = useState<PlayerSignup | null>(null);
   const [playerForm, setPlayerForm] = useState<PlayerFormState>(emptyPlayerForm);
   const [savingPlayer, setSavingPlayer] = useState(false);
+  const [crmPickerOpen, setCrmPickerOpen] = useState(false);
+  const [crmAddNotice, setCrmAddNotice] = useState<string | null>(null);
+
+  // What the API will name this session if the title field is left blank.
+  const autoTitlePreview = useMemo(
+    () => buildDefaultGroupSessionTitle(sessionForm.session_date, sessionForm.location),
+    [sessionForm.session_date, sessionForm.location]
+  );
 
   const openSpotsBySession = useMemo(() => {
     const map: Record<number, number> = {};
@@ -349,14 +366,8 @@ export default function GroupSessionsPage() {
   };
 
   const saveSession = async () => {
-    if (
-      !sessionForm.title.trim() ||
-      !sessionForm.session_date ||
-      !sessionForm.location.trim() ||
-      !sessionForm.image_url.trim() ||
-      !sessionForm.max_players.trim()
-    ) {
-      setError('Title, image URL, location, date, and max players are required.');
+    if (!sessionForm.session_date || !sessionForm.location.trim() || !sessionForm.max_players.trim()) {
+      setError('Location, date, and max players are required.');
       return;
     }
 
@@ -373,9 +384,11 @@ export default function GroupSessionsPage() {
 
     try {
       const payload = {
+        // Blank title/image are intentional: the API fills in the auto title
+        // and the default logo.
         title: sessionForm.title.trim(),
         description: sessionForm.description.trim() || null,
-        image_url: sessionForm.image_url.trim() || null,
+        image_url: sessionForm.image_url.trim(),
         session_date: sessionForm.session_date,
         session_date_end: sessionForm.session_date_end.trim() || null,
         location: sessionForm.location.trim() || null,
@@ -447,8 +460,7 @@ export default function GroupSessionsPage() {
       !quickAddForm.friday_date.trim() ||
       !quickAddForm.sunday_date.trim() ||
       !quickAddForm.curriculum.trim() ||
-      !quickAddForm.location.trim() ||
-      !quickAddForm.image_url.trim()
+      !quickAddForm.location.trim()
     ) {
       return;
     }
@@ -465,7 +477,7 @@ export default function GroupSessionsPage() {
           sunday_date: quickAddForm.sunday_date.trim(),
           curriculum: quickAddForm.curriculum.trim(),
           location: quickAddForm.location.trim(),
-          image_url: quickAddForm.image_url.trim(),
+          image_url: quickAddForm.image_url.trim() || null,
         }),
       });
 
@@ -489,8 +501,26 @@ export default function GroupSessionsPage() {
     setPlayersDialogSession(session);
     setEditingPlayer(null);
     setPlayerDialogOpen(false);
+    setCrmPickerOpen(false);
+    setCrmAddNotice(null);
     setPlayerForm(emptyPlayerForm);
     await fetchPlayers(session.id);
+  };
+
+  const handleCrmPlayersAdded = async (result: AddFromCrmResult) => {
+    if (!playersDialogSession) return;
+
+    const parts = [`Added ${result.added} player${result.added === 1 ? '' : 's'} from the CRM.`];
+    if (result.skipped.length > 0) {
+      parts.push(`Already in this session: ${result.skipped.join(', ')}.`);
+    }
+    if (result.warnings.length > 0) {
+      parts.push(`Missing contact info — ${result.warnings.join('; ')}.`);
+    }
+
+    setCrmAddNotice(parts.join(' '));
+    setCrmPickerOpen(false);
+    await Promise.all([fetchPlayers(playersDialogSession.id), fetchSessions()]);
   };
 
   const openCreatePlayerDialog = () => {
@@ -636,6 +666,9 @@ export default function GroupSessionsPage() {
   const activePlayersDialogSession = playersDialogSession
     ? sessions.find((session) => session.id === playersDialogSession.id) || playersDialogSession
     : null;
+  const crmPlayerIdsInSession = players
+    .map((player) => player.crm_player_id)
+    .filter((id): id is number => id != null);
   const paidPlayers = players.filter((player) => player.has_paid);
   const prospectPlayers = players.filter((player) => !player.has_paid);
   const sessionCollectedTotal = round2(
@@ -896,7 +929,7 @@ export default function GroupSessionsPage() {
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1, mb: 2 }}>
             Creates 4 sessions: Friday (8-10, 11-13) and Sunday (8-10, 11-13), each at
-            $50 with 12 max players.
+            $50 with {DEFAULT_GROUP_SESSION_MAX_PLAYERS} max players.
           </Typography>
           <Box sx={{ display: 'grid', gap: 2 }}>
             <TextField
@@ -956,13 +989,15 @@ export default function GroupSessionsPage() {
               </Typography>
             </Box>
             <TextField
-              label="Image URL *"
+              label="Image URL"
               value={quickAddForm.image_url}
               onChange={(e) =>
                 setQuickAddForm((prev) => ({ ...prev, image_url: e.target.value }))
               }
               fullWidth
-              required
+              placeholder={DEFAULT_GROUP_SESSION_IMAGE_URL}
+              helperText="Leave blank to use the default logo"
+              slotProps={{ inputLabel: { shrink: true } }}
             />
           </Box>
         </DialogContent>
@@ -976,8 +1011,7 @@ export default function GroupSessionsPage() {
               !quickAddForm.friday_date.trim() ||
               !quickAddForm.sunday_date.trim() ||
               !quickAddForm.curriculum.trim() ||
-              !quickAddForm.location.trim() ||
-              !quickAddForm.image_url.trim()
+              !quickAddForm.location.trim()
             }
           >
             {quickAdding ? 'Adding...' : 'Create 4 Sessions'}
@@ -1002,11 +1036,13 @@ export default function GroupSessionsPage() {
             }}
           >
             <TextField
-              label="Title *"
+              label="Title"
               value={sessionForm.title}
               onChange={(e) => setSessionForm((prev) => ({ ...prev, title: e.target.value }))}
               fullWidth
-              required
+              placeholder={autoTitlePreview}
+              helperText={`Leave blank for "${autoTitlePreview}"`}
+              slotProps={{ inputLabel: { shrink: true } }}
             />
             <TextField
               label="Date & Time *"
@@ -1073,11 +1109,13 @@ export default function GroupSessionsPage() {
               </Typography>
             </Box>
             <TextField
-              label="Image URL *"
+              label="Image URL"
               value={sessionForm.image_url}
               onChange={(e) => setSessionForm((prev) => ({ ...prev, image_url: e.target.value }))}
               fullWidth
-              required
+              placeholder={DEFAULT_GROUP_SESSION_IMAGE_URL}
+              helperText="Leave blank to use the default logo"
+              slotProps={{ inputLabel: { shrink: true } }}
               sx={{ gridColumn: { xs: 'span 1', md: 'span 2' } }}
             />
             <TextField
@@ -1104,25 +1142,23 @@ export default function GroupSessionsPage() {
             />
           </Box>
 
-          {sessionForm.image_url && (
-            <Box sx={{ mt: 2 }}>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                Image preview
-              </Typography>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={sessionForm.image_url}
-                alt="Group session preview"
-                style={{
-                  maxWidth: '100%',
-                  maxHeight: 220,
-                  objectFit: 'cover',
-                  borderRadius: 8,
-                  border: '1px solid #e5e7eb',
-                }}
-              />
-            </Box>
-          )}
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              {sessionForm.image_url.trim() ? 'Image preview' : 'Default image'}
+            </Typography>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={sessionForm.image_url.trim() || DEFAULT_GROUP_SESSION_IMAGE_URL}
+              alt="Group session preview"
+              style={{
+                maxWidth: '100%',
+                maxHeight: 220,
+                objectFit: 'cover',
+                borderRadius: 8,
+                border: '1px solid #e5e7eb',
+              }}
+            />
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSessionDialogOpen(false)}>Cancel</Button>
@@ -1131,10 +1167,8 @@ export default function GroupSessionsPage() {
             onClick={saveSession}
             disabled={
               savingSession ||
-              !sessionForm.title.trim() ||
               !sessionForm.session_date ||
               !sessionForm.location.trim() ||
-              !sessionForm.image_url.trim() ||
               !sessionForm.max_players.trim()
             }
           >
@@ -1192,14 +1226,29 @@ export default function GroupSessionsPage() {
                   label={`${prospectPlayers.length} prospect${prospectPlayers.length === 1 ? '' : 's'}`}
                 />
               </Box>
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={openCreatePlayerDialog}
-              >
-                Add Player
-              </Button>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button
+                  variant="contained"
+                  startIcon={<GroupAddIcon />}
+                  onClick={() => setCrmPickerOpen(true)}
+                >
+                  Add from CRM
+                </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<AddIcon />}
+                  onClick={openCreatePlayerDialog}
+                >
+                  Add Player
+                </Button>
+              </Box>
             </Box>
+          )}
+
+          {crmAddNotice && (
+            <Alert severity="info" sx={{ mb: 2 }} onClose={() => setCrmAddNotice(null)}>
+              {crmAddNotice}
+            </Alert>
           )}
 
           {loadingPlayers ? (
@@ -1421,6 +1470,15 @@ export default function GroupSessionsPage() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <CrmSignupPicker
+        open={crmPickerOpen}
+        groupSessionId={activePlayersDialogSession?.id ?? null}
+        sessionTitle={activePlayersDialogSession?.title ?? ''}
+        alreadyAddedPlayerIds={crmPlayerIdsInSession}
+        onClose={() => setCrmPickerOpen(false)}
+        onAdded={handleCrmPlayersAdded}
+      />
     </Box>
   );
 }
