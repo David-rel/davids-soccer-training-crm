@@ -37,6 +37,7 @@ import {
   buildDefaultGroupSessionTitle,
 } from '@/lib/group-sessions';
 import CrmSignupPicker, { AddFromCrmResult } from '@/components/sessions/CrmSignupPicker';
+import GooglePlacesTextField from '@/components/common/GooglePlacesTextField';
 
 export const dynamic = 'force-dynamic';
 
@@ -965,12 +966,10 @@ export default function GroupSessionsPage() {
               fullWidth
               required
             />
-            <TextField
+            <GooglePlacesTextField
               label="Location *"
               value={quickAddForm.location}
-              onChange={(e) =>
-                setQuickAddForm((prev) => ({ ...prev, location: e.target.value }))
-              }
+              onValueChange={(value) => setQuickAddForm((prev) => ({ ...prev, location: value }))}
               fullWidth
               required
             />
@@ -1065,10 +1064,10 @@ export default function GroupSessionsPage() {
               fullWidth
               slotProps={{ inputLabel: { shrink: true } }}
             />
-            <TextField
+            <GooglePlacesTextField
               label="Location *"
               value={sessionForm.location}
-              onChange={(e) => setSessionForm((prev) => ({ ...prev, location: e.target.value }))}
+              onValueChange={(value) => setSessionForm((prev) => ({ ...prev, location: value }))}
               fullWidth
               required
             />

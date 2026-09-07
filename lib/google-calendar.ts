@@ -496,8 +496,14 @@ async function getGroupSessionForSync(
     `SELECT
        gs.id,
        gs.session_date,
-       to_char((((gs.session_date AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')), 'YYYY-MM-DD"T"HH24:MI:SS') AS start_arizona_local,
-       to_char((((COALESCE(gs.session_date_end, gs.session_date + interval '60 minutes') AT TIME ZONE 'UTC') AT TIME ZONE 'America/Phoenix')), 'YYYY-MM-DD"T"HH24:MI:SS') AS end_arizona_local,
+       -- NOTE: only ONE conversion here, unlike the private/first-session
+       -- queries above. Their session_date is a naive timestamp holding UTC
+       -- wall clock, so those must go through UTC first to become an instant.
+       -- group_sessions.session_date is a timestamptz and already IS an
+       -- instant -- sending it through UTC first re-reads the UTC wall clock
+       -- as Phoenix local and pushes the event 7 hours late.
+       to_char((gs.session_date AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD"T"HH24:MI:SS') AS start_arizona_local,
+       to_char((COALESCE(gs.session_date_end, gs.session_date + interval '60 minutes') AT TIME ZONE 'America/Phoenix'), 'YYYY-MM-DD"T"HH24:MI:SS') AS end_arizona_local,
        gs.title,
        gs.description,
        gs.location,
