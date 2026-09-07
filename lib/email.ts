@@ -20,6 +20,13 @@ export interface SendEmailOptions {
   subject: string;
   html: string;
   replyTo?: string;
+  /** Plain-text alternative, for clients that don't render HTML. */
+  text?: string;
+  /**
+   * A calendar invite to ride along with the message. Mail clients surface it
+   * as "add to calendar" / RSVP rather than as a file to download.
+   */
+  icalEvent?: { filename: string; method: string; content: string };
 }
 
 export async function sendEmail(opts: SendEmailOptions) {
@@ -30,6 +37,8 @@ export async function sendEmail(opts: SendEmailOptions) {
     to: Array.isArray(opts.to) ? opts.to.join(', ') : opts.to,
     subject: opts.subject,
     html: opts.html,
+    text: opts.text,
     replyTo: opts.replyTo ?? user,
+    icalEvent: opts.icalEvent,
   });
 }

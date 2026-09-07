@@ -12,6 +12,8 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import Button from '@mui/material/Button';
 import Alert from '@mui/material/Alert';
+import Checkbox from '@mui/material/Checkbox';
+import FormControlLabel from '@mui/material/FormControlLabel';
 
 /** A player anywhere in the CRM, with the family they belong to. */
 interface CrmPlayer {
@@ -26,6 +28,11 @@ export interface AddFromCrmResult {
   added: number;
   skipped: string[];
   warnings: string[];
+  notified: {
+    emailed: number;
+    texted: number;
+    problems: string[];
+  } | null;
 }
 
 interface CrmSignupPickerProps {
@@ -70,6 +77,10 @@ export default function CrmSignupPicker({
   const [selected, setSelected] = useState<PickerOption[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // On by default: adding a family from the CRM is normally the moment you
+  // want them told. Unchecked for back-fills and for families you already
+  // spoke to in person.
+  const [notify, setNotify] = useState(true);
 
   useEffect(() => {
     if (!open) return;
@@ -78,6 +89,7 @@ export default function CrmSignupPicker({
     setLoading(true);
     setSelected([]);
     setError(null);
+    setNotify(true);
 
     fetch('/api/players', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : []))
@@ -167,7 +179,7 @@ export default function CrmSignupPicker({
       const res = await fetch(`/api/group-sessions/${groupSessionId}/players/from-crm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ player_ids: resolvedPlayerIds }),
+        body: JSON.stringify({ player_ids: resolvedPlayerIds, notify }),
       });
 
       if (!res.ok) {
@@ -249,6 +261,18 @@ export default function CrmSignupPicker({
               );
             })
           }
+        />
+
+        <FormControlLabel
+          sx={{ mt: 1 }}
+          control={
+            <Checkbox
+              checked={notify}
+              onChange={(event) => setNotify(event.target.checked)}
+              disabled={saving}
+            />
+          }
+          label="Text and email these families, with a calendar invite"
         />
       </DialogContent>
       <DialogActions>

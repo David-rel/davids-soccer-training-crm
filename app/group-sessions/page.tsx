@@ -219,6 +219,7 @@ export default function GroupSessionsPage() {
   const [savingPlayer, setSavingPlayer] = useState(false);
   const [crmPickerOpen, setCrmPickerOpen] = useState(false);
   const [crmAddNotice, setCrmAddNotice] = useState<string | null>(null);
+  const [crmAddNoticeSeverity, setCrmAddNoticeSeverity] = useState<'info' | 'warning'>('info');
 
   // What the API will name this session if the title field is left blank.
   const autoTitlePreview = useMemo(
@@ -512,14 +513,27 @@ export default function GroupSessionsPage() {
     if (!playersDialogSession) return;
 
     const parts = [`Added ${result.added} player${result.added === 1 ? '' : 's'} from the CRM.`];
+    if (result.notified) {
+      parts.push(
+        `Emailed ${result.notified.emailed} and texted ${result.notified.texted} famil${
+          result.notified.texted === 1 ? 'y' : 'ies'
+        }.`
+      );
+    }
     if (result.skipped.length > 0) {
       parts.push(`Already in this session: ${result.skipped.join(', ')}.`);
     }
     if (result.warnings.length > 0) {
       parts.push(`Missing contact info — ${result.warnings.join('; ')}.`);
     }
+    if (result.notified && result.notified.problems.length > 0) {
+      parts.push(`Not everyone was reached — ${result.notified.problems.join('; ')}.`);
+    }
 
     setCrmAddNotice(parts.join(' '));
+    setCrmAddNoticeSeverity(
+      result.notified && result.notified.problems.length > 0 ? 'warning' : 'info'
+    );
     setCrmPickerOpen(false);
     await Promise.all([fetchPlayers(playersDialogSession.id), fetchSessions()]);
   };
@@ -1245,7 +1259,11 @@ export default function GroupSessionsPage() {
           )}
 
           {crmAddNotice && (
-            <Alert severity="info" sx={{ mb: 2 }} onClose={() => setCrmAddNotice(null)}>
+            <Alert
+              severity={crmAddNoticeSeverity}
+              sx={{ mb: 2 }}
+              onClose={() => setCrmAddNotice(null)}
+            >
               {crmAddNotice}
             </Alert>
           )}

@@ -96,6 +96,8 @@ interface GroupSessionSyncRow {
   max_players: number;
   player_count: number;
   prospect_count: number;
+  /** Signed-up families' contact emails, for the event's guest list. */
+  attendee_emails: string[] | null;
 }
 
 interface GoogleSessionEventMapping {
@@ -511,7 +513,12 @@ async function getGroupSessionForSync(
        gs.curriculum,
        gs.max_players,
        COUNT(ps.id) FILTER (WHERE ps.has_paid = true)::int AS player_count,
-       COUNT(ps.id) FILTER (WHERE COALESCE(ps.has_paid, false) = false)::int AS prospect_count
+       COUNT(ps.id) FILTER (WHERE COALESCE(ps.has_paid, false) = false)::int AS prospect_count,
+       COALESCE(
+         ARRAY_AGG(DISTINCT ps.contact_email)
+           FILTER (WHERE ps.contact_email IS NOT NULL AND ps.contact_email <> ''),
+         '{}'
+       ) AS attendee_emails
      FROM group_sessions gs
      LEFT JOIN player_signups ps ON ps.group_session_id = gs.id
      WHERE gs.id = $1
@@ -520,7 +527,9 @@ async function getGroupSessionForSync(
   );
 
   if (result.rows.length === 0) return null;
-  return result.rows[0] as GroupSessionSyncRow;
+  const row = result.rows[0] as GroupSessionSyncRow;
+  row.attendee_emails = Array.isArray(row.attendee_emails) ? row.attendee_emails : [];
+  return row;
 }
 
 function shouldDeleteCalendarEvents(session: SessionSyncRow): boolean {
@@ -687,10 +696,17 @@ function buildGroupSessionGoogleEventPayload(groupSession: GroupSessionSyncRow):
     details.push(`Description: ${groupSession.description.trim()}`);
   }
 
+  // Guests are added with sendUpdates='none' throughout (see
+  // syncGroupSessionEventOnCalendar). The event still lands on their calendar,
+  // but Google does not email the families already on it every time a new one
+  // is added -- their own signup email carries the invite instead.
+  const attendeeEmails = parseGuestEmails(groupSession.attendee_emails || []).emails;
+
   return {
     summary:
       truncateGoogleField(groupSession.title, GOOGLE_EVENT_SUMMARY_MAX) ||
       `Group Session ${groupSession.id}`,
+    attendees: attendeeEmails.length > 0 ? attendeeEmails.map((email) => ({ email })) : undefined,
     description: truncateGoogleField(details.join('\n'), GOOGLE_EVENT_DESCRIPTION_MAX),
     location: truncateGoogleField(groupSession.location, GOOGLE_EVENT_LOCATION_MAX),
     start: {

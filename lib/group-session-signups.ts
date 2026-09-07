@@ -9,6 +9,7 @@
  * can't be added twice and the picker can grey out who is already in.
  */
 import { query } from '@/lib/db';
+import type { NotifyRecipient } from '@/lib/group-session-notifications';
 
 export interface CrmSignupCandidate {
   player_id: number;
@@ -29,6 +30,11 @@ export interface AddCrmPlayersResult {
   skipped: string[];
   /** Added, but their CRM contact is missing an email/phone. */
   warnings: string[];
+  /**
+   * Who to tell, one entry per FAMILY rather than per player, so a household
+   * with two kids gets a single message naming both.
+   */
+  recipients: NotifyRecipient[];
 }
 
 let ensureCrmLinkPromise: Promise<void> | null = null;
@@ -146,7 +152,8 @@ export async function addCrmPlayersToGroupSession(
     (existingResult.rows as Array<{ crm_player_id: number }>).map((row) => Number(row.crm_player_id))
   );
 
-  const result: AddCrmPlayersResult = { added: 0, skipped: [], warnings: [] };
+  const result: AddCrmPlayersResult = { added: 0, skipped: [], warnings: [], recipients: [] };
+  const recipientsByParent = new Map<number, NotifyRecipient>();
 
   for (const candidate of candidates) {
     if (alreadyIn.has(Number(candidate.player_id))) {
@@ -197,7 +204,22 @@ export async function addCrmPlayersToGroupSession(
 
     alreadyIn.add(Number(candidate.player_id));
     result.added += 1;
+
+    const parentId = Number(candidate.parent_id);
+    const existing = recipientsByParent.get(parentId);
+    if (existing) {
+      existing.playerNames.push(candidate.player_name);
+    } else {
+      recipientsByParent.set(parentId, {
+        parentId,
+        parentName: candidate.parent_name,
+        email: candidate.parent_email,
+        phone: candidate.parent_phone,
+        playerNames: [candidate.player_name],
+      });
+    }
   }
 
+  result.recipients = [...recipientsByParent.values()];
   return result;
 }
